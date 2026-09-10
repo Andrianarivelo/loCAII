@@ -1,0 +1,4 @@
+run,model,device,threads,context,run_total_seconds,workflow_seconds,successful_file_operations,input_unchanged,result_verified,final_reply_correct,workflow_passed,resume_passed
+1,qwen35-4b-abliterated,none,2,8192,171.929,,0,True,False,False,False,False
+2,qwen35-4b-abliterated,none,2,8192,224.051,223.885,3,True,True,False,False,False
+3,qwen35-9b-abliterated,none,4,8192,436.586,255.395,3,True,True,True,True,False

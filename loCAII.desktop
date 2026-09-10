@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=loCAII
+Comment=Local AI workbench: chat, files, images and video
+Exec="/run/media/andry/andryData/apps/loCAII/launch.sh"
+Icon=/run/media/andry/andryData/apps/loCAII/assets/locaii.svg
+Terminal=false
+Categories=Utility;Development;Graphics;
+StartupNotify=true
+StartupWMClass=loCAII

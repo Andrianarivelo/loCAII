@@ -1,0 +1,16 @@
+[
+  {
+    "model": "qwen35-9b-abliterated",
+    "passed": true,
+    "seconds": 254.749,
+    "checks": {
+      "result_unchanged": true,
+      "input_unchanged": true,
+      "read_observed": true,
+      "no_mutation": true,
+      "visible_final_code": true,
+      "completed": true,
+      "immediate_next_request": true
+    }
+  }
+]

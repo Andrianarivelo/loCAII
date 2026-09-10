@@ -1,0 +1,14 @@
+{
+  "before_proxy_tokens": 92452,
+  "after_proxy_tokens": 1127,
+  "seconds": 0.00864,
+  "checks": {
+    "full_archive_matches": true,
+    "source_database_unchanged": true,
+    "original_constraint_retained": true,
+    "fits_response_reserve": true,
+    "restart_reuses_archive": true
+  },
+  "passed": true,
+  "method": "Deterministic JSON character count / 4; not model inference."
+}

@@ -1,0 +1,80 @@
+{
+  "cpu_workflows": [
+    {
+      "run": 1,
+      "model": "qwen35-4b-abliterated",
+      "device": "none",
+      "threads": 2,
+      "context": 8192,
+      "run_total_seconds": 171.929,
+      "workflow_seconds": null,
+      "successful_file_operations": 0,
+      "input_unchanged": true,
+      "result_verified": false,
+      "final_reply_correct": false,
+      "workflow_passed": false,
+      "resume_passed": false
+    },
+    {
+      "run": 2,
+      "model": "qwen35-4b-abliterated",
+      "device": "none",
+      "threads": 2,
+      "context": 8192,
+      "run_total_seconds": 224.051,
+      "workflow_seconds": 223.885,
+      "successful_file_operations": 3,
+      "input_unchanged": true,
+      "result_verified": true,
+      "final_reply_correct": false,
+      "workflow_passed": false,
+      "resume_passed": false
+    },
+    {
+      "run": 3,
+      "model": "qwen35-9b-abliterated",
+      "device": "none",
+      "threads": 4,
+      "context": 8192,
+      "run_total_seconds": 436.586,
+      "workflow_seconds": 255.395,
+      "successful_file_operations": 3,
+      "input_unchanged": true,
+      "result_verified": true,
+      "final_reply_correct": true,
+      "workflow_passed": true,
+      "resume_passed": false
+    }
+  ],
+  "resume_after_lifecycle_fix": [
+    {
+      "model": "qwen35-9b-abliterated",
+      "passed": true,
+      "seconds": 254.749,
+      "checks": {
+        "result_unchanged": true,
+        "input_unchanged": true,
+        "read_observed": true,
+        "no_mutation": true,
+        "visible_final_code": true,
+        "completed": true,
+        "immediate_next_request": true
+      }
+    }
+  ],
+  "compaction": {
+    "before_proxy_tokens": 92452,
+    "after_proxy_tokens": 1127,
+    "seconds": 0.00864,
+    "checks": {
+      "full_archive_matches": true,
+      "source_database_unchanged": true,
+      "original_constraint_retained": true,
+      "fits_response_reserve": true,
+      "restart_reuses_archive": true
+    },
+    "passed": true,
+    "method": "Deterministic JSON character count / 4; not model inference."
+  },
+  "limitations": "Single runs under concurrent LM Studio CPU/GPU load. No statistical speed claim. Later runs include path guidance and bounded optional memory; model and thread counts may differ."
+}
