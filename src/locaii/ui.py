@@ -510,6 +510,8 @@ class MainWindow(QMainWindow):
             form.addRow(name, widget)
         self.media_form = form
         form_layout.addLayout(form)
+        self.media_preset_note = label("", "muted", True)
+        form_layout.addWidget(self.media_preset_note)
         form_layout.addWidget(
             label(
                 "Rendering releases the chat model to make room on the GPU. Workflow support determines which controls apply.",
@@ -1418,6 +1420,12 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "media_seed") or not 0 <= index < len(self._workflow_rows):
             return
         workflow = self._workflow_rows[index]
+        self.media_preset_note.setText(
+            "Verified Wan preset: 832 × 480, 33 frames, 20 steps. "
+            "Very small resolutions and clips can produce distorted results."
+            if workflow.get("name") == "Wan 2.2 5B"
+            else ""
+        )
         mapping = workflow.get("mapping", {})
         for key, widget in [
             ("negative_prompt", self.media_negative),

@@ -451,6 +451,20 @@ def main() -> int:
     )
     parser.add_argument("--kind", choices=["both", "image", "video"], default="both")
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--video-width", type=int, default=832)
+    parser.add_argument("--video-height", type=int, default=480)
+    parser.add_argument("--video-frames", type=int, default=33)
+    parser.add_argument(
+        "--legacy-memory",
+        action="store_true",
+        help="Test ComfyUI with dynamic VRAM disabled",
+    )
+    parser.add_argument(
+        "--video-steps",
+        type=int,
+        default=20,
+        help="Wan sampling steps; 20 matches the official base workflow",
+    )
     parser.add_argument(
         "--output", type=Path, default=PROJECT / ".local/verification/media"
     )
@@ -461,6 +475,10 @@ def main() -> int:
     root.mkdir(parents=True)
     # A new manager owns no foreign process. MediaService.stop() can affect only
     # a process created by this test manager, never an existing application's model.
+    if args.legacy_memory:
+        (root / "config.json").write_text(
+            json.dumps({"media": {"disable_dynamic_vram": True}})
+        )
     manager = ModelManager(root / "config.json", root / "chat-runtime")
     service = MediaService(root / "config.json", root / "state", manager)
     report = {
@@ -502,10 +520,10 @@ def main() -> int:
                     "video",
                     "A small red sailboat glides slowly across a calm blue lake, gentle ripples, fixed camera.",
                     {
-                        "width": 512,
-                        "height": 288,
-                        "frames": 9,
-                        "steps": 8,
+                        "width": args.video_width,
+                        "height": args.video_height,
+                        "frames": args.video_frames,
+                        "steps": args.video_steps,
                         "fps": 24,
                         "seed": 42,
                     },

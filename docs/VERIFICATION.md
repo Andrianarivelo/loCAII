@@ -10,7 +10,7 @@ RTX 4070 Laptop GPU with 8 GB VRAM, 32 GB system RAM, Python 3.12 in the dedicat
 
 The current suite covers native tool request/result serialization, exact rendered-text token counting, authenticated loopback inference, model lifecycle/cancellation, durable archives and resume, incomplete memory fallback, preserved original instructions, no fabricated empty completion, workspace boundaries and backups, protected measurement files, bounded attachments, terminal cancellation and recovery, supervision opt-in and structured reviews, media queue ownership and crash recovery, and Qt page/worker behavior. Deterministic fixtures exercise orchestration, not model intelligence.
 
-**100 tests passed** in the integrated suite. Python compilation, shell syntax, dependency consistency and native desktop launch checks also passed.
+**102 tests passed** in the integrated suite. Python compilation, shell syntax, dependency consistency and native desktop launch checks also passed.
 
 ## Actual model checks
 
@@ -41,7 +41,17 @@ The desktop launched natively on the user's display, and screenshots were inspec
 
 A separate **CPU-only ComfyUI readiness check passed in 7.65 seconds**: all 18 graph nodes matched the live `/object_info` schemas, CPU execution and an empty queue were confirmed, zero prompts were submitted, and the owned process was stopped. FFmpeg/ffprobe 9.0.1 is installed for actual video validation.
 
-Real GPU image/video generation and 9B GPU/vision load remain pending while the user's existing LM Studio generation occupies the GPU. Installed files, offline tests and UI screenshots are not presented as proof that rendering has succeeded. The reproducible `scripts/check_media.py` refuses to start its real checks when a foreign GPU workload lacks sufficient headroom.
+## GPU verification, 2026-09-11
+
+After two idle/no-queue checks over 60 seconds apart and a final fresh check, the idle LM Studio model was released normally. No active user request was interrupted. The standalone Vulkan 9B model loaded with 32,768 context tokens and passed actual read/write/read file work in 38.63 seconds including its memory update. Read-only continuation passed in another 11.54 seconds, preserving source bytes and output modification time. The complete run took 50.49 seconds. A separate process reopened the same saved task after the memory fix and passed read-only resume plus an immediate next request in 25.89 seconds.
+
+The 9B GPU vision check passed in 8.33 seconds including a 2.85-second load: the exact answer identified the red square on the left and blue circle on the right. Its owned process used 5,446 MiB and released GPU memory afterward.
+
+Live testing exposed a fallible memory summary that mistyped an absolute path and retained outdated pending steps. Memory now includes application-copied workspace, original/latest requests, latest assistant claim, and observed receipts ahead of the model interpretation. An adopted compaction checkpoint also stores its own evidence notes, so a later memory rewrite cannot erase its archived evidence. Two regression tests cover fabricated summaries and checkpoint replacement. The final assistant answer remains a claim, not independent proof of task completion.
+
+RealVisXL generated a 512 × 512 PNG in 16.08 seconds. Decoding, dimensions and hash were verified, and visual inspection confirmed the requested red teapot on a wooden table. Wan generated a decodable 9-frame H.264 file in 66.20 seconds, but inspection found badly distorted frames. This eight-step video trial is retained as a visual failure, despite passing integrity checks. The 20-step retest, standard-decoder retest, and disabled-dynamic-VRAM retest all retained the distortion. A VAE-only encode/decode reconstruction passed visually; full model/VAE SHA256 values matched the published weights. The larger 832 × 480, 33-frame, 20-step preset passed in 121.34 seconds. ffprobe verified 33 H.264 frames at 24 FPS (1.375 seconds). First, middle and last frames showed a coherent red-hulled sailboat moving across blue water without the severe slab distortion. Saturation remains strong. Resolution and length changed together, so this test establishes that the combined preset works, not which individual setting caused the earlier failure. The harness now defaults to this verified preset; the UI identifies it. All four visually failed trials remain in the [measured CSV](benchmarks/gpu-verification.csv), separately from file-integrity results.
+
+The original eight-step test was too small to serve as a useful quality validation. The standard decoder follows the [official ComfyUI workflow](https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_wan2_2_5B_ti2v.json); the installed quantized weights are unchanged. GPU rendering and 9B checks are complete. Longer videos, alternate prompts, 27B inference and cloud providers not explicitly measured here remain unverified.
 
 ## Practical limits
 

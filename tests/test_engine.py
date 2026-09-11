@@ -464,3 +464,64 @@ def test_resume_does_not_repeat_command_with_unobserved_outcome(task):
     assert not list((store.task_dir(identifier) / "jobs").glob("*.json"))
     results = [m for m in store.messages(identifier) if m["role"] == "tool"]
     assert "unknown" in results[-1]["content"]
+
+
+def test_fallible_summary_cannot_replace_recorded_resume_evidence(task):
+    """A summary with stale status or mistyped paths keeps exact current receipts."""
+    store, identifier, workspace = task
+    store.append(identifier, "user", "Write a synthetic result and verify it.")
+    store.append(identifier, "user", "Continue. Read result.md without rewriting.")
+    store.append(
+        identifier,
+        "tool",
+        '{"path":"result.md","content":"BIRCH-629"}',
+        tool_call_id="receipt",
+    )
+    store.append(identifier, "assistant", "RESUME_READY BIRCH-629")
+    models = FakeModels()
+    models.memory_response = answer(
+        "# Memory\nPending: write /mistyped/workspace/result.md again."
+    )
+    engine = Engine(store, models)
+    engine._memory(identifier, threading.Event(), lambda *_: None)
+    memory = store.memory(identifier)
+    recorded, interpretation = memory.split("## Model interpretation (fallible)")
+    assert str(workspace) in recorded
+    assert "Continue. Read result.md without rewriting." in recorded
+    assert "RESUME_READY BIRCH-629" in recorded
+    assert r'"path\":\"result.md\"' in recorded
+    assert "/mistyped/" not in recorded
+    assert "/mistyped/" in interpretation
+    assert "RESUME_READY BIRCH-629" in canonical(models.prompts[-1])
+
+
+def test_saved_compaction_evidence_survives_later_memory_replacement(task):
+    """A later model or tool memory update cannot erase adopted archive evidence."""
+    store, identifier, _ = task
+    store.append(identifier, "user", "Summarize the synthetic log.")
+    store.append(
+        identifier,
+        answer("", [call("read_text_file", {"path": "synthetic.log"}, "read")])[
+            "message"
+        ],
+    )
+    store.append(
+        identifier,
+        "tool",
+        "OBSERVED_MARKER_629 " + "receipt " * 20000,
+        tool_call_id="read",
+    )
+    models = FakeModels(context=16000)
+    engine = Engine(store, models)
+    engine._compact(
+        identifier,
+        engine._context(identifier),
+        [],
+        lambda *_: None,
+        threading.Event(),
+        16000,
+    )
+    store.save_memory(identifier, "A model summary incorrectly omitted all receipts.")
+    restored = canonical(Engine(store, models)._context(identifier))
+    assert "OBSERVED_MARKER_629" in restored
+    assert "incorrectly omitted" not in restored

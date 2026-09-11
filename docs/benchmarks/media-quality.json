@@ -1,0 +1,47 @@
+{
+  "method": "Explicit visual inspection, separate from machine-checked file integrity. A pass only applies to the inspected fixture.",
+  "artifacts": {
+    "a9df9d7f041223579baa5266c19a4395eb4ce97fa90fd617d0f7a48574b9f890": {
+      "decoder": "tiled",
+      "human_inspection": {
+        "verdict": "pass",
+        "notes": "Generated image was visually inspected and matched the benign fixture."
+      }
+    },
+    "c192eb3a19928422c03e99f91314d9ecc1d2afb68176d5b7ddf5b248af33216e": {
+      "decoder": "tiled",
+      "human_inspection": {
+        "verdict": "fail",
+        "notes": "Extracted frames were visually distorted despite successful H.264 decoding."
+      }
+    },
+    "37dc9604a58fb28c8bc8ec867361e21970a958ed7ba968a29b938daffb8b2d1d": {
+      "decoder": "tiled",
+      "human_inspection": {
+        "verdict": "fail",
+        "notes": "Increasing the sampling steps to 20 did not resolve the visible distortion."
+      }
+    },
+    "cb7982cf20281063ecf75ec0fea0c7d37f6ebde9d176c65162bf4041c0fbf968": {
+      "decoder": "standard",
+      "human_inspection": {
+        "verdict": "fail",
+        "notes": "Standard decoding retained severe cyan, blue and magenta slabs with only a coarse subject shape."
+      }
+    },
+    "4d5ad3cbe930f9de73e16a332bec4fd91b7a3557fbfb04a39d1cbc07a024feca": {
+      "decoder": "standard",
+      "human_inspection": {
+        "verdict": "fail",
+        "notes": "Disabling dynamic VRAM did not resolve the same severe visual distortion."
+      }
+    },
+    "1637fb086833e3191e44329c7c014c4850640977f22ad9590be156043be53dcc": {
+      "decoder": "standard",
+      "human_inspection": {
+        "verdict": "pass",
+        "notes": "First, middle and last frames show a coherent red-hulled sailboat moving over blue water, without the severe slab distortion in tiny test settings. Saturation is strong; this is a short fixture check, not a general quality benchmark."
+      }
+    }
+  }
+}

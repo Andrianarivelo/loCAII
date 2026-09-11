@@ -98,7 +98,9 @@ class Engine:
                         {
                             "role": "assistant",
                             "content": "Historical task checkpoint, fallible evidence:\n"
-                            + self.store.memory(session_id),
+                            + state.get(
+                                "evidence_notes", self.store.memory(session_id)
+                            ),
                         }
                     ]
                     + messages[count:]
@@ -177,6 +179,7 @@ class Engine:
                 "archive": str(path),
                 "covered_count": len(all_messages),
                 "prefix_digest": digest(all_messages),
+                "evidence_notes": notes[:6500],
             },
         )
         self._emit(
@@ -202,10 +205,25 @@ class Engine:
 
     def _memory(self, session_id, cancel, emit):
         """Ask the local model for a small memory update; preserve valid notes on failure."""
-        receipts = [m for m in self.store.messages(session_id) if m["role"] == "tool"][
-            -5:
-        ]
-        evidence = "\n".join(canonical(m)[:1800] for m in receipts)
+        messages = self.store.messages(session_id)
+        receipts = [m for m in messages if m["role"] == "tool"][-5:]
+        evidence = "\n".join(canonical(m)[:1000] for m in receipts)[-4000:]
+        users = [m for m in messages if m["role"] == "user" and not m.get("_runtime")]
+        replies = [m for m in messages if m["role"] == "assistant" and m.get("content")]
+        # These fields are copied by the application, never rewritten by the model.
+        # The latest response is a claim, not independent proof of completion.
+        facts = (
+            "# Task memory: recorded evidence\n\nWorkspace: "
+            + self.store.get_session(session_id)["workspace"]
+            + "\n\n## Original user request\n"
+            + (str(users[0].get("content", ""))[:2200] if users else "")
+            + "\n\n## Latest user instruction\n"
+            + (str(users[-1].get("content", ""))[:1200] if users else "")
+            + "\n\n## Latest assistant response (unverified claim)\n"
+            + (str(replies[-1].get("content", ""))[:1200] if replies else "")
+            + "\n\n## Observed tool receipts (bounded excerpts)\n"
+            + evidence
+        )
         prompt = [
             {
                 "role": "system",
@@ -215,8 +233,8 @@ class Engine:
                 "role": "user",
                 "content": "Prior fallible memory:\n"
                 + self.store.memory(session_id)[:3500]
-                + "\nObserved evidence:\n"
-                + evidence,
+                + "\nCurrent recorded evidence (takes precedence):\n"
+                + facts,
             },
         ]
         timeout = threading.Event()
@@ -241,7 +259,12 @@ class Engine:
                 "cancelled",
             }:
                 raise ValueError("Memory summary incomplete.")
-            path = self.store.save_memory(session_id, text)
+            path = self.store.save_memory(
+                session_id,
+                facts + "\n\n## Model interpretation (fallible)\n"
+                "Recorded evidence above takes precedence over this interpretation.\n"
+                + text,
+            )
             self._emit(
                 session_id,
                 emit,

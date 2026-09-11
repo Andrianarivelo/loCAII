@@ -67,7 +67,7 @@ The text token counter reported 37 tokens for the first prompt, exactly matching
 
 NVIDIA compute-process snapshots before, during, and after showed only the existing LM Studio process at 6,582 MiB. The CPU test added no GPU allocation. Machine-local full results and raw backend logs are in `.local/verification/cpu-model/`, excluded from Git.
 
-This CPU test does not establish GPU performance, vision correctness, or 27B usability. Those require separate live measurements after the active GPU workload finishes. Performance varies with concurrent work, model size, context, and the selected backend.
+This CPU test does not establish GPU performance, vision correctness, or 27B usability. The separate later GPU and vision measurements are documented below. The 27B model remains unverified. Performance varies with concurrent work, model size, context, and the selected backend.
 
 ## Full CPU agent workflow baseline
 
@@ -112,4 +112,10 @@ python scripts/check_cpu_workflow.py --gpu --model qwen35-9b-abliterated --threa
 python scripts/check_vision.py --gpu --model qwen35-9b-abliterated --threads 6
 ```
 
-`--gpu` uses full GPU offload, a 32K context, and the matching vision projector on CPU. CPU mode remains the default and retains the 8K context and explicit zero offload. The GPU checks refuse obvious VRAM contention and never release another application's model. They are reproducible follow-up checks, not a statement that the GPU run has already passed. Every report records actual settings and strict outcomes.
+`--gpu` uses full GPU offload, a 32K context, and the matching vision projector on CPU. CPU mode remains the default and retains the 8K context and explicit zero offload. The GPU checks refuse obvious VRAM contention and never release another application's model. The 9B GPU workflow, read-only resume and vision checks passed on 2026-09-11; see [verification results](VERIFICATION.md). Every report records actual settings and strict outcomes.
+
+## Measured GPU result
+
+On 2026-09-11 the 9B abliterated model passed the same synthetic file workflow with full NVIDIA Vulkan offload, six threads, 32K context, q8 KV cache and the CPU vision projector. Workflow including memory took 38.63 seconds; read-only continuation took 11.54 seconds. A fresh-process resume after the memory evidence fix took 25.89 seconds including load and a subsequent inference request. The earlier CPU trial used four threads and 8K context and took 255.40 seconds for the workflow, so these single-run timings include different context, caching and memory-summary behavior. They are not a controlled throughput benchmark.
+
+GPU vision also passed the synthetic two-shape check in 8.33 seconds. The owned server allocated 5,446 MiB for that run. No LM Studio inference server was used. Optional summaries remain fallible; exact copied evidence and the archived transcript are retained separately.

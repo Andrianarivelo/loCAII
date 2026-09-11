@@ -473,6 +473,8 @@ class MediaService:
             "ComfyUI-GGUF",
             "local_media_cpu_clip.py",
         ]
+        if self.config.get("disable_dynamic_vram", False):
+            args.append("--disable-dynamic-vram")
         self._log = (self.state_dir / "comfy.log").open("ab")
         environment = dict(
             os.environ,
