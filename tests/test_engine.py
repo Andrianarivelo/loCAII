@@ -357,7 +357,11 @@ def test_supervisor_continue_causes_local_iteration_before_done(task):
         Engine(store, models, supervisor),
         identifier,
         "Verify evidence.txt before finishing.",
-        options={"supervisor_provider": "local", "supervisor_every": 4},
+        options={
+            "supervisor_provider": "local",
+            "supervisor_every": 4,
+            "supervisor_scope": "all",
+        },
     )
     assert result["status"] == "completed"
     assert result["iterations"] == 3
@@ -428,7 +432,7 @@ def test_initial_supervisor_plan_reaches_first_local_prediction(task):
         Engine(store, models, supervisor),
         identifier,
         "Original user objective.",
-        options={"supervisor_provider": "local"},
+        options={"supervisor_provider": "local", "supervisor_scope": "all"},
     )
     assert result["status"] == "completed"
     assert result["iterations"] == 1
@@ -525,3 +529,188 @@ def test_saved_compaction_evidence_survives_later_memory_replacement(task):
     restored = canonical(Engine(store, models)._context(identifier))
     assert "OBSERVED_MARKER_629" in restored
     assert "incorrectly omitted" not in restored
+
+
+def test_plain_chat_ignores_review_budget_and_old_tool_history(task):
+    """A new conversational turn uses no reviewer, even in an old work session."""
+    store, identifier, _ = task
+    store.append(identifier, "user", "Earlier file task")
+    store.append(
+        identifier,
+        answer("", [call("list_directory", {"path": "."}, "old")])["message"],
+    )
+    store.append(
+        identifier, "tool", "Old listing", name="list_directory", tool_call_id="old"
+    )
+    supervisor = FakeSupervisor([])
+    models = FakeModels([answer("Hello. How can I help?")])
+    result = run(
+        Engine(store, models, supervisor),
+        identifier,
+        "hello",
+        options={
+            "supervisor_provider": "codex-cli",
+            "remote_enabled": True,
+            "supervisor_token_budget": 1,
+        },
+    )
+    assert result["status"] == "completed"
+    assert supervisor.calls == 0
+    assert not any(
+        e["type"] in {"review", "review_skipped", "error"}
+        for e in store.events(identifier)
+    )
+
+
+@pytest.mark.parametrize("scope,every", [("all", 1), ("tasks", 1), ("tasks", 4)])
+def test_allowance_exhaustion_keeps_local_work_and_skips_once(task, scope, every):
+    """Preplan, milestone and final review caps never undo a completed local task."""
+    from locaii.supervision import Supervisor
+
+    store, identifier, workspace = task
+    models = FakeModels(
+        [
+            answer(
+                "",
+                [
+                    call(
+                        "write_file",
+                        {"path": "derived.txt", "content": "verified"},
+                        "w",
+                    )
+                ],
+                "tool_calls",
+            ),
+            answer(
+                "", [call("read_text_file", {"path": "derived.txt"}, "r")], "tool_calls"
+            ),
+            answer("Read back verified from derived.txt."),
+        ]
+    )
+    result = run(
+        Engine(store, models, Supervisor(store)),
+        identifier,
+        "Write and verify a synthetic derived file.",
+        options={
+            "supervisor_provider": "codex-cli",
+            "supervisor_scope": scope,
+            "supervisor_every": every,
+            "remote_enabled": True,
+            "supervisor_token_budget": 1,
+        },
+    )
+    assert result["status"] == "completed"
+    assert result["review_status"] == "skipped_allowance"
+    assert (workspace / "derived.txt").read_text() == "verified"
+    assert store.get_session(identifier)["status"] == "completed"
+    events = store.events(identifier)
+    skipped = [e for e in events if e["type"] == "review_skipped"]
+    assert len(skipped) == 1 and skipped[0]["reviewed"] is False
+    assert skipped[0]["allowance_tokens"] == 1
+    assert not any(
+        e["type"] in {"error", "supervisor_usage", "supervisor_review"} for e in events
+    )
+    assert store.supervisor_tokens(identifier) == 0
+
+
+def test_default_tool_scope_still_reviews_and_requests_correction(task):
+    """Tools-only mode preserves evaluation and bounded follow-up iterations."""
+    store, identifier, workspace = task
+    (workspace / "evidence.txt").write_text("VERIFIED")
+    supervisor = FakeSupervisor(
+        [
+            {
+                "verdict": "continue",
+                "summary": "Read the evidence again to confirm",
+                "next_steps": ["Read evidence.txt."],
+            },
+            {
+                "verdict": "complete",
+                "summary": "Observed verification",
+                "next_steps": [],
+            },
+        ]
+    )
+    models = FakeModels(
+        [
+            answer(
+                "",
+                [call("read_text_file", {"path": "evidence.txt"}, "one")],
+                "tool_calls",
+            ),
+            answer("Read the evidence."),
+            answer(
+                "",
+                [call("read_text_file", {"path": "evidence.txt"}, "two")],
+                "tool_calls",
+            ),
+            answer("Verified twice."),
+        ]
+    )
+    result = run(
+        Engine(store, models, supervisor),
+        identifier,
+        "Verify evidence.txt.",
+        options={"supervisor_provider": "local"},
+    )
+    assert result["status"] == "completed" and supervisor.calls == 2
+    assert result["tool_rounds"] == 2
+
+
+def test_optional_review_does_not_swallow_provider_errors(task):
+    """Authentication/provider failures stay visible, unlike an explicit budget cap."""
+    store, identifier, _ = task
+
+    class BrokenSupervisor:
+        def review(self, *args):
+            raise RuntimeError("Provider unavailable")
+
+    with pytest.raises(RuntimeError, match="Provider unavailable"):
+        run(
+            Engine(store, FakeModels([]), BrokenSupervisor()),
+            identifier,
+            "Hello",
+            options={
+                "supervisor_provider": "codex-cli",
+                "supervisor_scope": "all",
+            },
+        )
+
+
+def test_allowance_after_successful_plan_preserves_completed_answer(task):
+    """Reproduce a funded preplan followed by an unaffordable final review."""
+    from locaii.supervision import SupervisorBudgetExceeded
+
+    store, identifier, _ = task
+
+    class PlanThenCap:
+        calls = 0
+
+        def review(self, *args):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "verdict": "continue",
+                    "summary": "Answer concisely",
+                    "next_steps": [],
+                }
+            raise SupervisorBudgetExceeded(14000, 21000, 24000)
+
+    supervisor = PlanThenCap()
+    result = run(
+        Engine(store, FakeModels([answer("A complete local answer.")]), supervisor),
+        identifier,
+        "A simple question",
+        options={
+            "supervisor_provider": "codex-cli",
+            "supervisor_scope": "all",
+            "remote_enabled": True,
+            "supervisor_token_budget": 24000,
+        },
+    )
+    assert (
+        result["status"] == "completed" and result["text"] == "A complete local answer."
+    )
+    assert result["review_status"] == "skipped_allowance"
+    assert supervisor.calls == 2
+    assert not any(e["type"] == "error" for e in store.events(identifier))

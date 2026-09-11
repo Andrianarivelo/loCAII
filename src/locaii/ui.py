@@ -733,6 +733,13 @@ class MainWindow(QMainWindow):
         self.supervisor_model.setPlaceholderText(
             "Provider model ID (optional for local/manual)"
         )
+        self.supervisor_scope = QComboBox()
+        self.supervisor_scope.addItem("Tool work only (recommended)", "tasks")
+        self.supervisor_scope.addItem("Every message, including conversation", "all")
+        self.supervisor_scope.setToolTip(
+            "Tool work only saves supervisor usage for tasks that use local tools. "
+            "Every message also requests planning and review for ordinary conversation."
+        )
         self.supervisor_every = QSpinBox()
         self.supervisor_every.setRange(1, 100)
         self.supervisor_every.setValue(6)
@@ -771,6 +778,7 @@ class MainWindow(QMainWindow):
         for name, widget in [
             ("Supervisor", self.supervisor_provider),
             ("Supervisor model", self.supervisor_model),
+            ("When to review", self.supervisor_scope),
             ("Review every N steps", self.supervisor_every),
             ("Maximum local iterations", self.max_iterations),
             ("Supervisor token allowance", self.token_budget),
@@ -1133,6 +1141,7 @@ class MainWindow(QMainWindow):
                         "compaction",
                         "usage",
                         "supervisor_usage",
+                        "review_skipped",
                     }:
                         self.handle_event(kind, saved)
             self.update_supervisor_totals()
@@ -1301,6 +1310,7 @@ class MainWindow(QMainWindow):
             "supervisor_provider": self.supervisor_provider.currentData(),
             "supervisor_model": self.supervisor_model.text().strip(),
             "supervisor_every": self.supervisor_every.value(),
+            "supervisor_scope": self.supervisor_scope.currentData(),
             "max_iterations": self.max_iterations.value(),
             "supervisor_token_budget": self.token_budget.value(),
             "remote_enabled": self.remote_enabled.isChecked(),
@@ -1508,6 +1518,15 @@ class MainWindow(QMainWindow):
                 f"<p><b>{html.escape(name)}</b> · {html.escape(state)}</p><pre>{html.escape(rendered)}</pre>"
             )
             self.stream_message = None
+        elif event == "review_skipped":
+            # A skipped external review is neither local failure nor verified success.
+            # Keep the answer and its streaming widget intact as local work continues.
+            text = str(
+                payload.get("text")
+                or "Automatic review skipped; local work can continue."
+            )
+            self.activity.append("<p>Review skipped: " + html.escape(text) + "</p>")
+            self.statusBar().showMessage(text)
         elif event in {"review", "usage", "plan", "supervisor_usage"}:
             detail = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
             self.activity.append(
@@ -2098,6 +2117,7 @@ class MainWindow(QMainWindow):
             self.supervisor_model.setText(data.get("supervisor_model", ""))
             for key, widget in [
                 ("supervisor_provider", self.supervisor_provider),
+                ("supervisor_scope", self.supervisor_scope),
                 ("supervisor_cli", self.supervisor_cli),
                 ("model_id", self.model_combo),
             ]:

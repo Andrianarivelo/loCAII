@@ -364,3 +364,41 @@ def test_primary_supervisor_choice_roundtrips_without_remote_enable(
     assert not restored.remote_enabled.isChecked()
     assert restored.supervisor_provider.currentData() == "off"
     restored.close()
+
+
+def test_review_scope_defaults_to_tool_work_and_roundtrips(tmp_path):
+    app, window, engine = create_window(tmp_path)
+    assert window.options()["supervisor_scope"] == "tasks"
+    window.supervisor_scope.setCurrentIndex(window.supervisor_scope.findData("all"))
+    window.save_preferences()
+    window.close()
+    app, restored, engine = create_window(tmp_path)
+    assert restored.options()["supervisor_scope"] == "all"
+    restored.close()
+
+
+def test_review_skipped_retains_answer_without_error_or_review_claim(tmp_path):
+    app, window, engine = create_window(tmp_path)
+    window.handle_event("delta", {"text": "A useful local answer."})
+    answer = window.stream_message
+    review_before = window.review_view.toPlainText()
+    status_before = window.run_status.text()
+    window.handle_event(
+        "review_skipped",
+        {
+            "reason": "allowance",
+            "text": "Review allowance reached. Local work continues.",
+            "reviewed": False,
+        },
+    )
+    assert window.stream_message is answer
+    assert answer.content == "A useful local answer."
+    assert not window.error_seen
+    assert window.error_label.isHidden()
+    assert window.review_view.toPlainText() == review_before
+    assert window.run_status.text() == status_before
+    assert "Review skipped" in window.activity.toPlainText()
+    assert "Local work continues" in window.statusBar().currentMessage()
+    window.handle_event("delta", {"text": " Still working."})
+    assert answer.content == "A useful local answer. Still working."
+    window.close()

@@ -1,0 +1,5 @@
+version,case,status,completed,review_calls
+before,simple_chat,completed,1,2
+before,insufficient_allowance,error,0,
+after,simple_chat,completed,1,0
+after,insufficient_allowance,completed,1,

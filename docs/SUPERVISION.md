@@ -28,7 +28,7 @@ The supervisor polls efficiently with `task_status(wait_seconds=20)` and receive
 
 ## Advanced automatic reviews
 
-Expand **Advanced review settings** for the previous automatic review and manual packet workflow. Local work remains the default. Remote review only runs when explicitly enabled. A reviewer proposes a concise plan, evaluates milestones and final evidence, and returns structured `complete`, `continue`, or `blocked`. `continue` launches another local iteration, without granting additional filesystem permissions. These reviewers are separate from the interactive supervisor connection above.
+Expand **Advanced review settings** for automatic review and manual packet workflows. **When to review** defaults to **Tool work only (recommended)**: ordinary chat responses do not request a supervisor or consume its allowance, even in a conversation that previously used tools. **Every message, including conversation** explicitly enables initial planning and reply reviews. Tool-based work retains milestone/final evaluation and correction iterations. Local work remains the default. Remote review only runs when explicitly enabled. A reviewer proposes a concise plan, evaluates milestones and final evidence, and returns structured `complete`, `continue`, or `blocked`. `continue` launches another local iteration, without granting additional filesystem permissions. These reviewers are separate from the interactive supervisor connection above.
 
 ### Review modes
 
@@ -47,7 +47,7 @@ A packet includes bounded user requests, memory, recent observed tool receipts a
 
 A real Codex CLI check correctly refused to accept an unsupported completion claim and requested actual write/read receipts. Its 2,162-character packet resulted in 13,743 input tokens and 242 output tokens, including CLI system context. This exposed the importance of measuring the entire provider invocation, not just the packet. The initial 12K estimate was exceeded; the implementation now reserves an extra 18K tokens per CLI review before dispatch and displays actual reported usage.
 
-The allowance stops additional reviews when insufficient estimated capacity remains. It is not a guaranteed billing cap, especially for CLI agents with hidden context or reasoning. APIs bound output tokens; the app conservatively reserves input/output capacity and records actual usage when returned. Check your provider's own account limits for an independent financial cap.
+The allowance stops additional reviews when insufficient estimated capacity remains. This skips optional reviews for the rest of the current turn and records a neutral notice, while local work continues. A skipped review is never recorded as approval. The next turn rechecks the remaining allowance. Provider errors and explicit supervisor blockers still surface. It is not a guaranteed billing cap, especially for CLI agents with hidden context or reasoning. APIs bound output tokens; the app conservatively reserves input/output capacity and records actual usage when returned. Check your provider's own account limits for an independent financial cap.
 
 For economy, use manual review in an existing assistant conversation or API review at meaningful milestones, and let the local model do intermediate file/tool work. Do not assume a universal percentage saving. Model quality, retries, packet size and review frequency all affect the result.
 
@@ -64,3 +64,7 @@ Reproduce the paid/GPU integration check explicitly with `python scripts/check_d
 ## Verification and sources
 
 The interactive connection follows the [official Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), including stdio transport and MCP server instructions. The Codex review adapter follows [official non-interactive execution documentation](https://developers.openai.com/codex/noninteractive/). The API adapters use [OpenAI Responses](https://platform.openai.com/docs/api-reference/responses) and [Claude Messages](https://platform.claude.com/docs/en/api/messages/create). CLI flags were checked against the installed versions. The Codex CLI route was live-tested; API and Claude CLI routes require the user's valid credentials and are covered by local validation tests, not a claimed live cloud run.
+
+## Simple-chat allowance regression
+
+Compared identical synthetic chat fixtures against commit b6ae8cb and the fix: automatic review calls decreased from two to zero under default settings. A reply with insufficient automatic-review allowance previously ended in error; it now completes locally. The test uses scripted answers and no provider or GPU calls. [CSV](benchmarks/review-scope.csv) and [figure](benchmarks/review-scope.png) record behavior, not model quality or timing. Reproduce with `python scripts/benchmark_review_scope.py --before b6ae8cbb0c55eb085a7e9fad6408d22f61cc10ca`.

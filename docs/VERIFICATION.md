@@ -64,3 +64,7 @@ The interactive Codex route passed through the real stdio MCP adapter, authentic
 The native Ptyxis terminal executed the generated launcher and preserved CLI arguments using a synthetic executable. Installed Codex configuration inspection confirmed only locaii enabled, with existing servers disabled for this invocation. Global CLI configuration was unchanged. Claude's launch configuration is tested locally but its provider route remains unverified.
 
 Final regression suite: 135 tests passed in 9.99 seconds. Python compilation and Git whitespace checks passed. Explicit saved review allowances remain unchanged; the primary supervisor choice persists. No GPU compute process remained after the isolated test.
+
+## Simple-chat review allowance fix
+
+144 tests passed in10.47seconds. New cases cover plainchat following oldtoolhistory, budget caps at initialplanning/milestone/finalreview, an affordable plan followed by an unaffordablefinalreview, continued local write/readverification, reviewer-requestedcorrection, visible actual providererrors, persisted reviewscope and neutral skippedreviewdisplay. Deterministic comparison against b6ae8cb reproduced twoautomaticreviewcalls before andzeroafter for simplechat; an insufficientallowance previously causederror andnowallowscompletion. No new provider or GPU calls were needed.
