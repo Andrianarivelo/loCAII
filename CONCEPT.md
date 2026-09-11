@@ -25,3 +25,7 @@ Build and test on this machine with Huihui Qwen3.5 abliterated GGUF. Validate a 
 ## Initial boundaries
 
 This is a complete extensible first desktop version, not a claim to reproduce every undocumented feature in Codex. The prior local fixes form the reliability baseline. Optional cloud providers are usable only with valid authentication and their availability is shown honestly. A stopped or unreachable backend produces a visible recoverable state, never an empty success.
+
+## Simplified interactive supervision
+
+Open & connect launches an existing Codex or Claude CLI in a terminal with a session-specific local-model bridge. The supervisor owns difficult reasoning and final evaluation, while bounded simple/moderate tasks run through the same durable local worker as chat. Five MCP tools provide model/scope discovery, idempotent delegation, efficient status waiting, saved-session continuation and cooperative cancellation. Existing automatic-review controls remain available under Advanced review settings. Scope is frozen per connection; subordinate remote review is disabled. Interactive CLI usage is separate from the automatic-review allowance.

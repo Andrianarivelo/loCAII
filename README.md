@@ -63,6 +63,12 @@ python scripts/install_desktop.py
 
 ComfyUI and its existing weights remain a separate local installation; its paths can be changed in Create > Render engine settings.
 
+## Open a connected supervisor
+
+Select your local model and workspace, then choose **Supervision → Codex CLI or Claude CLI → Open & connect supervisor**. Give the supervisor your objective in its terminal. It delegates simple to moderate work to the local model, checks observed results, and can request another iteration in the saved task. Keep loCAII open. Previous review controls are under **Advanced review settings**.
+
+The CLI uses its existing sign-in and provider defaults. Its token usage is separate from the automatic-review allowance. See [setup, scope and real measurements](docs/SUPERVISION.md).
+
 ## Development and verification
 
 ```bash

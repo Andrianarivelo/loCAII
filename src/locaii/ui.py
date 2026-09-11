@@ -231,6 +231,11 @@ class MainWindow(QMainWindow):
         self.stream_message: Message | None = None
         self.error_seen = False
         self._pending_close = False
+        self._delegation_hub = None
+        self._delegation_job_id: str | None = None
+        self._delegation_session_id: str | None = None
+        self._supervisor_instructions = ""
+        self._supervisor_scope = None
         self._model_rows: list[dict] = []
         self._media_files: list[str] = []
         self.setWindowTitle("loCAII · Local intelligence, your workspace")
@@ -640,6 +645,75 @@ class MainWindow(QMainWindow):
             "A supervisor plans and reviews milestones while your local model does the detailed work.",
             scrollable=True,
         )
+        connection, connection_layout = card()
+        connection_layout.addWidget(label("YOUR SUPERVISOR", "eyebrow"))
+        connection_layout.addWidget(
+            label(
+                "Open an assistant and give it your local model as a teammate.",
+                "",
+                True,
+            )
+        )
+        connection_layout.addWidget(
+            label(
+                "The supervisor plans, delegates simple to moderate tasks to the selected local "
+                "model, and checks its results. You can watch each delegated task in Workspace.",
+                "muted",
+                True,
+            )
+        )
+        connection_row = QHBoxLayout()
+        self.supervisor_cli = QComboBox()
+        self.supervisor_cli.addItem("Codex CLI", "codex-cli")
+        self.supervisor_cli.addItem("Claude CLI", "claude-cli")
+        connection_row.addWidget(self.supervisor_cli)
+        self.open_supervisor_button = button(
+            "Open && connect supervisor", self.open_supervisor, True
+        )
+        connection_row.addWidget(self.open_supervisor_button)
+        self.copy_supervisor_button = button(
+            "Copy launch command", self.copy_supervisor_connection
+        )
+        connection_row.addWidget(self.copy_supervisor_button)
+        self.disconnect_supervisor_button = button(
+            "Disconnect", self.disconnect_supervisor
+        )
+        self.disconnect_supervisor_button.setEnabled(False)
+        connection_row.addWidget(self.disconnect_supervisor_button)
+        connection_layout.addLayout(connection_row)
+        connection_layout.addWidget(
+            label(
+                "Opening or copying a connection allows the external assistant to receive "
+                "tasks and results from the selected workspace. Local work uses the file and "
+                "terminal permissions below. Your CLI account handles its own usage charges.",
+                "muted",
+                True,
+            )
+        )
+        self.supervisor_connection_status = label("Disconnected", "status", True)
+        connection_layout.addWidget(self.supervisor_connection_status)
+        self.supervisor_scope_label = label(
+            "Uses the selected model and workspace. Opens your assistant in a terminal.",
+            "muted",
+            True,
+        )
+        connection_layout.addWidget(self.supervisor_scope_label)
+        self.supervisor_launch_error = label("", "warning", True)
+        self.supervisor_launch_error.hide()
+        connection_layout.addWidget(self.supervisor_launch_error)
+        layout.addWidget(connection)
+
+        self.advanced_supervision_toggle = button("Advanced review settings")
+        self.advanced_supervision_toggle.setCheckable(True)
+        layout.addWidget(self.advanced_supervision_toggle)
+        self.advanced_supervision = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced_supervision)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        self.advanced_supervision_toggle.toggled.connect(
+            self.advanced_supervision.setVisible
+        )
+        self.advanced_supervision.setVisible(False)
+        layout.addWidget(self.advanced_supervision)
         box, content = card()
         form = QFormLayout()
         form.setVerticalSpacing(15)
@@ -668,7 +742,7 @@ class MainWindow(QMainWindow):
         self.token_budget = QSpinBox()
         self.token_budget.setRange(256, 1000000)
         self.token_budget.setSingleStep(1000)
-        self.token_budget.setValue(12000)
+        self.token_budget.setValue(60000)
         self.remote_enabled = QCheckBox(
             "Allow objective, file excerpts, and evidence to reach the selected external supervisor"
         )
@@ -708,6 +782,15 @@ class MainWindow(QMainWindow):
         ]:
             form.addRow(name, widget)
         content.addLayout(form)
+        self.supervisor_allowance_hint = label(
+            "CLI reviews include substantial agent context. Increase the allowance to at least "
+            "24,000 tokens before running automatic CLI reviews, or choose manual review.",
+            "warning",
+            True,
+        )
+        self.supervisor_allowance_hint.hide()
+        content.addWidget(self.supervisor_allowance_hint)
+        self.token_budget.valueChanged.connect(self.supervisor_selected)
         content.addWidget(
             label(
                 "API modes use OPENAI_API_KEY or ANTHROPIC_API_KEY from your environment. CLI modes use your authenticated CLI. API reviews use compact packets. CLI reviews include extra agent context; the token allowance is an estimate, not a billing cap. No credentials are extracted from another app.",
@@ -716,7 +799,7 @@ class MainWindow(QMainWindow):
             )
         )
         content.addWidget(button("Save preferences", self.save_preferences, True))
-        layout.addWidget(box)
+        advanced_layout.addWidget(box)
         packets, packets_layout = card()
         packets_layout.addWidget(label("BRING YOUR EXISTING ASSISTANT", "eyebrow"))
         packets_layout.addWidget(
@@ -740,8 +823,206 @@ class MainWindow(QMainWindow):
         )
         packets_layout.addWidget(self.supervisor_usage_label)
         self.token_budget.valueChanged.connect(self.update_supervisor_totals)
-        layout.addWidget(packets)
+        advanced_layout.addWidget(packets)
         layout.addStretch()
+        self.delegation_timer = QTimer(self)
+        self.delegation_timer.setInterval(400)
+        self.delegation_timer.timeout.connect(self.poll_delegation)
+
+    def _supervisor_connection(self):
+        """Freeze the selected workspace, model, and local permissions per connection."""
+        from .delegation import DelegationHub
+        from .supervisor_launch import SupervisorLauncher
+
+        model_id = self.model_combo.currentData()
+        model = next(
+            (row for row in self.models.list_models() if row.get("id") == model_id),
+            None,
+        )
+        if not model:
+            raise ValueError(
+                "Select a local model in Models before connecting a supervisor."
+            )
+        if self._delegation_hub is None:
+            self._delegation_hub = DelegationHub(self._preferences_path().parent)
+        if self._supervisor_scope is None:
+            options = {
+                **self.options(),
+                "remote_enabled": False,
+                "supervisor_provider": "off",
+            }
+            connection_path = self._delegation_hub.connect(
+                self.workspace, options, model
+            )
+            self._supervisor_scope = (connection_path, self.workspace, model)
+        else:
+            connection_path, _, model = self._supervisor_scope
+        self.supervisor_scope_label.setText(
+            f"Local model: {model.get('name', model['id'])} · Workspace: {self._supervisor_scope[1]}\n"
+            "Disconnect before changing the connection's workspace, model, or permissions."
+        )
+        launcher = SupervisorLauncher(self._preferences_path().parent)
+        self.disconnect_supervisor_button.setEnabled(True)
+        self.delegation_timer.start()
+        return launcher, connection_path, model
+
+    def open_supervisor(self) -> None:
+        """Launch a dedicated CLI with a connection scoped to this app and workspace."""
+        existing_connection = self._supervisor_scope is not None
+        self.supervisor_launch_error.hide()
+        try:
+            launcher, connection_path, model = self._supervisor_connection()
+            result = launcher.open(
+                self.supervisor_cli.currentData(),
+                connection_path,
+                self._supervisor_scope[1],
+                model,
+            )
+            self._supervisor_instructions = str(result.get("instructions", ""))
+            self._save_supervisor_choice()
+            self.supervisor_connection_status.setText(
+                "Ready. Waiting for the supervisor to connect…"
+            )
+        except Exception as exc:
+            if not existing_connection:
+                self.disconnect_supervisor()
+            self.supervisor_launch_error.setText(
+                "Could not open supervisor: " + str(exc)
+            )
+            self.supervisor_launch_error.show()
+
+    def copy_supervisor_connection(self) -> None:
+        """Prepare scoped instructions for an existing assistant without launching it."""
+        existing_connection = self._supervisor_scope is not None
+        self.supervisor_launch_error.hide()
+        try:
+            launcher, connection_path, model = self._supervisor_connection()
+            result = launcher.prepare(
+                self.supervisor_cli.currentData(),
+                connection_path,
+                self._supervisor_scope[1],
+                model,
+            )
+            self._supervisor_instructions = str(result["instructions"])
+            QApplication.clipboard().setText(self._supervisor_instructions)
+            self._save_supervisor_choice()
+            self.supervisor_connection_status.setText(
+                "Connection instructions copied. Waiting for the supervisor…"
+            )
+        except Exception as exc:
+            if not existing_connection:
+                self.disconnect_supervisor()
+            self.supervisor_launch_error.setText(
+                "Could not prepare connection: " + str(exc)
+            )
+            self.supervisor_launch_error.show()
+
+    def disconnect_supervisor(self) -> None:
+        """Revoke new delegations while allowing an already running task to finish."""
+        if self._delegation_hub is not None:
+            self._delegation_hub.disconnect()
+        self.delegation_timer.stop()
+        self._supervisor_scope = None
+        self.disconnect_supervisor_button.setEnabled(False)
+        self.supervisor_connection_status.setText(
+            "Disconnected. The running local task will finish; use Stop to interrupt it."
+            if self._delegation_job_id
+            else "Disconnected"
+        )
+
+    def poll_delegation(self) -> None:
+        """Drain one local job only when chat, inference, and rendering are idle."""
+        hub = self._delegation_hub
+        if hub is None or self._pending_close:
+            return
+        identity = None
+        try:
+            state = hub.status()
+            contacted = bool(state.get("connected") and state.get("last_client_seen"))
+            self.supervisor_connection_status.setText(
+                (
+                    "Supervisor contacted · connection available"
+                    if contacted
+                    else "Ready. Waiting for supervisor"
+                )
+                + (f" · Local task running" if self._delegation_job_id else "")
+                + f" · {state.get('queued', 0)} queued"
+            )
+            if self._delegation_job_id:
+                if self.worker and hub.cancel_requested(self._delegation_job_id):
+                    self.worker.cancel.set()
+                return
+            if self.worker:
+                return
+            job = hub.take_next()
+            if not job:
+                return
+            identity = str(job["id"])
+            session_id = job.get("session_id")
+            if not session_id:
+                session = self.store.create_session(
+                    "Delegated · " + str(job.get("title") or job["task"])[:65],
+                    job["workspace"],
+                )
+                session_id = str(session["id"])
+            hub.bind_session(identity, session_id)
+            self._delegation_job_id = identity
+            self._delegation_session_id = session_id
+            self.reload_sessions()
+            if (
+                not self.session_id
+                and not self.composer.toPlainText().strip()
+                and not self.attachments
+            ):
+                for row in range(self.task_list.count()):
+                    item = self.task_list.item(row)
+                    if item.data(Qt.UserRole) == session_id:
+                        self.task_list.setCurrentItem(item)
+                        break
+            self.statusBar().showMessage(
+                "Supervisor delegated a local task. It appears in your task list."
+            )
+            options = {
+                **job["options"],
+                "supervisor_provider": "off",
+                "remote_enabled": False,
+            }
+
+            def run_delegated(cancel, emit):
+                """Persist bridge receipts independently of the currently displayed task."""
+
+                def relay(event, payload):
+                    hub.record_event(identity, event, payload)
+                    emit(
+                        "delegated_event",
+                        {"session_id": session_id, "event": event, "payload": payload},
+                    )
+
+                try:
+                    result = self.engine.run(
+                        session_id, job["task"], [], options, cancel, relay
+                    )
+                    hub.complete(identity, result)
+                    return result
+                except Exception as exc:
+                    hub.fail(identity, str(exc))
+                    raise
+
+            self.start_work(run_delegated, self.delegation_finished)
+        except Exception as exc:
+            if identity is not None and not self.worker:
+                hub.fail(identity, str(exc))
+                self._delegation_job_id = None
+                self._delegation_session_id = None
+            self.delegation_timer.stop()
+            self.supervisor_connection_status.setText(
+                "Connection needs attention: " + str(exc)
+            )
+
+    def delegation_finished(self, result: Any) -> None:
+        """Keep the user's selected task and unsent draft untouched by background work."""
+        if self.session_id == self._delegation_session_id:
+            self.chat_finished(result)
 
     def update_supervisor_totals(self, *_args) -> None:
         """Account for the full task history, not merely the visible event tail."""
@@ -760,13 +1041,12 @@ class MainWindow(QMainWindow):
         )
 
     def supervisor_selected(self, *_args) -> None:
-        """CLI agent context needs a larger estimated allowance than a bare API call."""
-        if (
-            hasattr(self, "token_budget")
-            and self.supervisor_provider.currentData() in {"codex-cli", "claude-cli"}
-            and self.token_budget.value() < 24000
-        ):
-            self.token_budget.setValue(24000)
+        """Explain insufficient CLI headroom without overriding the user's allowance."""
+        if hasattr(self, "supervisor_allowance_hint"):
+            self.supervisor_allowance_hint.setVisible(
+                self.supervisor_provider.currentData() in {"codex-cli", "claude-cli"}
+                and self.token_budget.value() < 24000
+            )
 
     def navigate(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
@@ -817,7 +1097,7 @@ class MainWindow(QMainWindow):
         if not item:
             return
         selected = item.data(Qt.UserRole)
-        if self.worker and selected != self.session_id:
+        if self.worker and not self._delegation_job_id and selected != self.session_id:
             self.reload_sessions()
             return
         self.session_id = selected
@@ -1106,7 +1386,7 @@ class MainWindow(QMainWindow):
         self.load_model_button.setEnabled(False)
         self.unload_model_button.setEnabled(False)
         self.cpu_preset_button.setEnabled(False)
-        self.task_list.setEnabled(False)
+        self.task_list.setEnabled(bool(self._delegation_job_id))
         self.stop_button.setEnabled(True)
         self.media_stop.setEnabled(True)
         self.run_status.setText("◌ Working")
@@ -1124,6 +1404,8 @@ class MainWindow(QMainWindow):
         old = self.worker
         stopped = bool(old and old.cancel.is_set())
         self.worker = None
+        self._delegation_job_id = None
+        self._delegation_session_id = None
         if old:
             old.deleteLater()
         self.send_button.setEnabled(True)
@@ -1174,6 +1456,10 @@ class MainWindow(QMainWindow):
     def handle_event(self, event: str, payload: Any) -> None:
         """Render truthful progress; errors never become blank success messages."""
         payload = payload if isinstance(payload, dict) else {"text": str(payload)}
+        if event == "delegated_event":
+            if payload.get("session_id") == self.session_id:
+                self.handle_event(payload["event"], payload["payload"])
+            return
         if event == "delta":
             text = str(payload.get("text", ""))
             if not self.stream_message:
@@ -1812,6 +2098,7 @@ class MainWindow(QMainWindow):
             self.supervisor_model.setText(data.get("supervisor_model", ""))
             for key, widget in [
                 ("supervisor_provider", self.supervisor_provider),
+                ("supervisor_cli", self.supervisor_cli),
                 ("model_id", self.model_combo),
             ]:
                 index = widget.findData(data.get(key))
@@ -1822,12 +2109,33 @@ class MainWindow(QMainWindow):
         except (FileNotFoundError, ValueError, KeyError, OSError):
             pass
 
+    def _save_supervisor_choice(self) -> None:
+        """Remember the launch choice without persisting unrelated permission changes."""
+        try:
+            path = self._preferences_path()
+            data = json.loads(path.read_text()) if path.exists() else {}
+            data["supervisor_cli"] = self.supervisor_cli.currentData()
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(data, indent=2))
+            temporary.replace(path)
+        except (OSError, ValueError, TypeError) as exc:
+            self.statusBar().showMessage(
+                "Supervisor opened, but its preference could not be saved: " + str(exc)
+            )
+
     def save_preferences(self) -> None:
         try:
             path = self._preferences_path()
             temporary = path.with_suffix(".tmp")
             temporary.write_text(
-                json.dumps({**self.options(), "workspace": self.workspace}, indent=2)
+                json.dumps(
+                    {
+                        **self.options(),
+                        "workspace": self.workspace,
+                        "supervisor_cli": self.supervisor_cli.currentData(),
+                    },
+                    indent=2,
+                )
             )
             temporary.replace(path)
             self.statusBar().showMessage(
@@ -1885,4 +2193,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Finishing the stop request before closing…")
             event.ignore()
         else:
+            if self._delegation_hub is not None:
+                self.disconnect_supervisor()
             event.accept()

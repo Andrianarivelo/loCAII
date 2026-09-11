@@ -1,0 +1,3 @@
+mode,seconds,passed,provider_input_tokens,provider_cached_input_tokens,provider_output_tokens,report_sha256
+Previous direct local workflow,50.486,True,0,0,0,d637ccccb792c1c9500485dfe0e9d6aea73b5b1db7d6c0ce2e6a0e4eb513893f
+Connected supervisor workflow,59.59,True,127567,86912,499,62d14419a8a08d82a5a3edd412d39727a3915ac74601cfa8a8ea40d6df3199e9

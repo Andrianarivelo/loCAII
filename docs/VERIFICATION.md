@@ -56,3 +56,11 @@ The original eight-step test was too small to serve as a useful quality validati
 ## Practical limits
 
 The app preserves progress and exposes failures; it cannot make 4B reasoning equivalent to a larger model. CPU inference is usable but slow. Increase model size, add independent review, or narrow the task when small-model instruction following fails. Large contexts are not a substitute for compaction on an 8 GB GPU. File-tool restrictions do not sandbox optional shell commands or Python extensions.
+
+## Connected supervisor verification, 2026-09-11
+
+The interactive Codex route passed through the real stdio MCP adapter, authenticated loopback bridge, GUI timer/Worker, durable engine and Qwen3.5 9B abliterated GPU runtime. Two completed jobs shared one saved session: read/write/read, then read-only verification. Independent checks confirmed the exact source code, unchanged original bytes and output mtime, actual tool receipts, preserved unsent draft, and no recursive external reviews. Elapsed time: 59.59 seconds. See [supervision measurements](SUPERVISION.md#live-delegation-verification) for measured token overhead and comparison limits.
+
+The native Ptyxis terminal executed the generated launcher and preserved CLI arguments using a synthetic executable. Installed Codex configuration inspection confirmed only locaii enabled, with existing servers disabled for this invocation. Global CLI configuration was unchanged. Claude's launch configuration is tested locally but its provider route remains unverified.
+
+Final regression suite: 135 tests passed in 9.99 seconds. Python compilation and Git whitespace checks passed. Explicit saved review allowances remain unchanged; the primary supervisor choice persists. No GPU compute process remained after the isolated test.
