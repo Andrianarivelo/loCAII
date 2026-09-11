@@ -67,6 +67,8 @@ class Store:
         CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,title TEXT,workspace TEXT,status TEXT,updated REAL);
         CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,payload TEXT,created REAL);
         CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,type TEXT,payload TEXT,created REAL);
+        CREATE TABLE IF NOT EXISTS steering(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL,text TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created REAL NOT NULL,delivered REAL);
+        CREATE INDEX IF NOT EXISTS steering_session_status_id ON steering(session_id,status,id);
         """)
         with self.db:
             self.db.execute(
@@ -157,6 +159,103 @@ class Store:
                     (identifier,),
                 )
             ]
+
+    def queue_steering(self, session_id: str, text: str) -> dict:
+        """Save new user direction without interrupting or invoking a worker.
+
+        Preserve the original text exactly. A bounded pending queue prevents
+        accidental repeated clicks from creating an unbounded future prompt.
+        The explicit write transaction also serializes independent connections
+        to this database, beyond the in-process reentrant lock.
+        """
+        if not isinstance(text, str) or not text.strip() or len(text) > 32000:
+            raise ValueError("Steering must contain 1 to 32000 characters of text.")
+        if not isinstance(session_id, str):
+            raise KeyError("Task not found.")
+        with self._lock, self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            self.get_session(session_id)
+            count = self.db.execute(
+                "SELECT COUNT(*) FROM steering WHERE session_id=? AND status='pending'",
+                (session_id,),
+            ).fetchone()[0]
+            if count >= 32:
+                raise ValueError(
+                    "This task already has 32 pending messages. Wait for delivery before adding more."
+                )
+            created = time.time()
+            cursor = self.db.execute(
+                "INSERT INTO steering(session_id,text,status,created) VALUES(?,?,'pending',?)",
+                (session_id, text, created),
+            )
+            item = {"id": cursor.lastrowid, "text": text, "status": "pending"}
+            self.db.execute(
+                "INSERT INTO events(session_id,type,payload,created) VALUES(?,?,?,?)",
+                (
+                    session_id,
+                    "steering_queued",
+                    canonical({"id": item["id"], "text": text}),
+                    created,
+                ),
+            )
+            self.db.execute(
+                "UPDATE sessions SET updated=? WHERE id=?", (created, session_id)
+            )
+            return item
+
+    def pending_steering(self, session_id: str) -> list[dict]:
+        """Inspect queued directions in receipt order without delivering them."""
+        if not isinstance(session_id, str):
+            raise KeyError("Task not found.")
+        with self._lock:
+            self.get_session(session_id)
+            return [
+                dict(row)
+                for row in self.db.execute(
+                    "SELECT id,text,status FROM steering WHERE session_id=? AND status='pending' ORDER BY id",
+                    (session_id,),
+                )
+            ]
+
+    def consume_steering(self, session_id: str) -> list[dict]:
+        """Atomically deliver pending directions into the durable conversation.
+
+        The engine calls this only between complete tool-call/result groups.
+        Both message insertion and delivery marks commit together, so retries
+        after an exception or process restart cannot duplicate a user message.
+        No inference or automatic task execution takes place in this method.
+        """
+        if not isinstance(session_id, str):
+            raise KeyError("Task not found.")
+        with self._lock, self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            self.get_session(session_id)
+            rows = self.db.execute(
+                "SELECT id,text FROM steering WHERE session_id=? AND status='pending' ORDER BY id",
+                (session_id,),
+            ).fetchall()
+            delivered = time.time()
+            messages = []
+            for row in rows:
+                message = {
+                    "role": "user",
+                    "content": row["text"],
+                    "_steering_id": row["id"],
+                }
+                self.db.execute(
+                    "INSERT INTO messages(session_id,payload,created) VALUES(?,?,?)",
+                    (session_id, canonical(message), delivered),
+                )
+                self.db.execute(
+                    "UPDATE steering SET status='delivered',delivered=? WHERE id=?",
+                    (delivered, row["id"]),
+                )
+                messages.append(message)
+            if rows:
+                self.db.execute(
+                    "UPDATE sessions SET updated=? WHERE id=?", (delivered, session_id)
+                )
+            return messages
 
     def event(self, identifier: str, kind: str, payload: dict) -> None:
         """Write structured activity and validation receipts separately from the prompt."""

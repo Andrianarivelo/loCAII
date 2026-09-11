@@ -1,0 +1,3 @@
+version,git_revision,source_sha256,send_enabled_during_work,accepted_durably,delivered_to_prompt,revised_answer_visible,original_objective_retained,worker_completed,task_predictions,trial_count,fixture
+before,a1646cc9bac23663333cc6588ba6022c8bad60d5,ece0002435eee92bc6291efa3e93edfcf500f60a5b617d023092f7f32a13b668,0,0,0,0,1,1,1,1,synthetic Qt + Engine + SQLite; no inference service
+after,working-source snapshot,ef1015d48f6edab9f310bdf8ba30bac155712057da261eeec110de7c38133869,1,1,1,1,1,1,2,1,synthetic Qt + Engine + SQLite; no inference service

@@ -63,6 +63,16 @@ python scripts/install_desktop.py
 
 ComfyUI and its existing weights remain a separate local installation; its paths can be changed in Create > Render engine settings.
 
+## Send instructions while a task runs
+
+While a chat task is running, type in its composer and click **Send update** (or press Enter). The message is saved immediately and added to the model's next prompt at a safe boundary. You can correct a constraint, add a requirement, or ask for progress without discarding completed work.
+
+A prediction or tool already running finishes before the update is applied. Later, undispatched tool calls from the previous plan are deferred so the model can reconsider them. **Stop** remains the control for interrupting execution. Queued messages survive interruption or restart; **Continue** applies remaining messages while preserving your unsent draft. Updates currently accept text only. New attachments can be sent once the current run finishes.
+
+The button applies to the selected active chat, including a selected delegated task. Image/video generation and model loading cannot receive chat updates. Model, workspace and permissions remain those captured for the active run. A very late update to a successfully completed ordinary chat automatically starts another turn after its worker exits. Stopped, failed and delegated runs never restart automatically; pending instructions remain available through **Continue**.
+
+Queued and delivered notices distinguish saved instructions from instructions added to the next prompt. Delivery is not proof that a model followed the instructions correctly; the task's observed results remain the evidence.
+
 ## Open a connected supervisor
 
 Select your local model and workspace, then choose **Supervision → Codex CLI or Claude CLI → Open & connect supervisor**. Give the supervisor your objective in its terminal. It delegates simple to moderate work to the local model, checks observed results, and can request another iteration in the saved task. Keep loCAII open. Previous review controls are under **Advanced review settings**.

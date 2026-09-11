@@ -29,3 +29,7 @@ This is a complete extensible first desktop version, not a claim to reproduce ev
 ## Simplified interactive supervision
 
 Open & connect launches an existing Codex or Claude CLI in a terminal with a session-specific local-model bridge. The supervisor owns difficult reasoning and final evaluation, while bounded simple/moderate tasks run through the same durable local worker as chat. Five MCP tools provide model/scope discovery, idempotent delegation, efficient status waiting, saved-session continuation and cooperative cancellation. Existing automatic-review controls remain available under Advanced review settings. Scope is frozen per connection; subordinate remote review is disabled. Interactive CLI usage is separate from the automatic-review allowance.
+
+## Durable live task steering
+
+The chat composer remains available during local work. New text is stored in a bounded, per-task SQLite queue, then atomically inserted into the conversation at engine boundaries. The engine checks before each tool dispatch and after prediction, review and memory work. Undispatched calls receive explicit nonexecution receipts before new instructions enter the native tool-call history. Existing results stay intact. The UI shows queued and delivered states, preserves pending updates on Stop/restart, and closes the ordinary-chat completion race by continuing with frozen settings after worker exit. Text steering does not alter model, workspace or permissions.

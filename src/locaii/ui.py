@@ -6,6 +6,7 @@ model or workflow therefore appears without introducing provider logic into Qt.
 
 from __future__ import annotations
 
+import copy
 import html
 import json
 import os
@@ -228,6 +229,13 @@ class MainWindow(QMainWindow):
         self.workspace = str(Path.home())
         self.attachments: list[str] = []
         self.worker: Worker | None = None
+        self._active_chat_session_id: str | None = None
+        self._active_chat_options: dict | None = None
+        self._active_chat_succeeded = False
+        self._steering_restart_generation = 0
+        self._visible_steering_ids: set[str] = set()
+        self._steering_bubbles: dict[str, Message] = {}
+        self._stream_prefix_before_update = ""
         self.stream_message: Message | None = None
         self.error_seen = False
         self._pending_close = False
@@ -373,6 +381,9 @@ class MainWindow(QMainWindow):
         self.error_label = label("", "warning", True)
         self.error_label.hide()
         body.addWidget(self.error_label)
+        self.steering_status = label("", "muted", True)
+        self.steering_status.hide()
+        body.addWidget(self.steering_status)
         composer = QFrame()
         composer.setObjectName("composerFrame")
         compose_layout = QVBoxLayout(composer)
@@ -1016,7 +1027,12 @@ class MainWindow(QMainWindow):
                     hub.fail(identity, str(exc))
                     raise
 
-            self.start_work(run_delegated, self.delegation_finished)
+            self.start_work(
+                run_delegated,
+                self.delegation_finished,
+                session_id=session_id,
+                options=options,
+            )
         except Exception as exc:
             if identity is not None and not self.worker:
                 hub.fail(identity, str(exc))
@@ -1142,9 +1158,12 @@ class MainWindow(QMainWindow):
                         "usage",
                         "supervisor_usage",
                         "review_skipped",
+                        "steering_applied",
                     }:
                         self.handle_event(kind, saved)
             self.update_supervisor_totals()
+            self.refresh_pending_steering(show_messages=True)
+            self.update_send_mode()
             self.navigate(0)
         except Exception as exc:
             self.show_error(str(exc))
@@ -1166,6 +1185,10 @@ class MainWindow(QMainWindow):
 
     def clear_messages(self) -> None:
         self.stream_message = None
+        self._stream_prefix_before_update = ""
+        self._visible_steering_ids.clear()
+        self._steering_bubbles.clear()
+        self.steering_status.hide()
         while self.message_layout.count() > 1:
             item = self.message_layout.takeAt(0)
             if item.widget():
@@ -1318,6 +1341,7 @@ class MainWindow(QMainWindow):
 
     def send(self) -> None:
         if self.worker:
+            self.queue_live_update()
             return
         text = self.composer.toPlainText().strip()
         if not text:
@@ -1367,20 +1391,158 @@ class MainWindow(QMainWindow):
                 session_id, text, attachments, options, cancel, emit
             ),
             self.chat_finished,
+            session_id=session_id,
+            options=options,
+        )
+
+    def update_send_mode(self) -> None:
+        """Allow steering only for the displayed, actively executing chat task."""
+        can_update = bool(
+            self.worker
+            and self._active_chat_session_id
+            and self._active_chat_session_id == self.session_id
+        )
+        self.send_button.setText("Send update" if can_update else "Send  ↑")
+        self.send_button.setEnabled(not self.worker or can_update)
+
+    def refresh_pending_steering(self, show_messages: bool = False) -> list:
+        """Keep durable, unapplied updates visible after interruption or selection."""
+        if not self.session_id or not hasattr(self.store, "pending_steering"):
+            return []
+        pending = self.store.pending_steering(self.session_id)
+        if show_messages:
+            for item in pending:
+                identity = str(item["id"])
+                if identity not in self._visible_steering_ids:
+                    self.add_message("user", str(item["text"]) + "\n\n*Queued update*")
+                    self._visible_steering_ids.add(identity)
+        if pending:
+            tail = (
+                "Waiting for a safe boundary."
+                if self.worker
+                else "Use Continue to apply them."
+            )
+            self.steering_status.setText(f"{len(pending)} update(s) queued. {tail}")
+            self.steering_status.show()
+        return pending
+
+    def queue_live_update(self) -> None:
+        """Save steering before acknowledging it, without disturbing the running worker."""
+        if (
+            not self._active_chat_session_id
+            or self.session_id != self._active_chat_session_id
+        ):
+            self.statusBar().showMessage(
+                "Select the running chat task to send an update. Other operations cannot receive chat updates."
+            )
+            return
+        if self.worker.cancel.is_set():
+            self.statusBar().showMessage(
+                "This task is stopping. Your draft is preserved; use Continue after it stops."
+            )
+            return
+        if self.attachments:
+            self.steering_status.setText(
+                "Updates during a run accept text only. Clear attachments to send this update, or wait for the task to finish. Your draft and files are preserved."
+            )
+            self.steering_status.show()
+            return
+        text = self.composer.toPlainText().strip()
+        if not text:
+            return
+        try:
+            queued = self.store.queue_steering(self._active_chat_session_id, text)
+        except Exception as exc:
+            self.steering_status.setText(
+                "Could not save this update. Your draft is preserved: " + str(exc)
+            )
+            self.steering_status.show()
+            return
+        if self.stream_message:
+            self._stream_prefix_before_update += self.stream_message.content
+        self.stream_message = None
+        self._steering_bubbles[str(queued["id"])] = self.add_message(
+            "user", text + "\n\n*Queued update*"
+        )
+        self._visible_steering_ids.add(str(queued["id"]))
+        self.composer.clear()
+        self.refresh_pending_steering()
+        self.statusBar().showMessage(
+            "Update saved. It will enter the model's context at the next safe boundary."
         )
 
     def resume(self) -> None:
+        """Continue the selected task without overwriting an unsent composer draft."""
         if self.session_id and not self.worker:
-            self.composer.setPlainText("Continue")
-            self.send()
+            session_id, options = self.session_id, self.options()
+            if not options.get("model_id"):
+                self.show_error("Import or select a GGUF model in Models first.")
+                self.navigate(2)
+                return
+            if (
+                options["supervisor_provider"]
+                in {"openai", "anthropic", "codex-cli", "claude-cli"}
+                and not options["remote_enabled"]
+            ):
+                self.show_error(
+                    "Enable external supervisor access in Supervision, or choose a local/off supervisor."
+                )
+                self.navigate(3)
+                return
+            self.add_message("user", "Continue")
+            self.stream_message = None
+            self._stream_prefix_before_update = ""
+            self.start_work(
+                lambda cancel, emit: self.engine.run(
+                    session_id, "Continue", [], options, cancel, emit
+                ),
+                self.chat_finished,
+                session_id=session_id,
+                options=options,
+            )
 
-    def start_work(self, action: Callable, finished: Callable | None = None) -> None:
-        """Serialize inference/render jobs and keep controls honest while a worker runs."""
+    def _resume_late_steering(
+        self, session_id: str, options: dict, generation: int
+    ) -> None:
+        """Close the completion race only for successful normal chat, after QThread exit."""
+        if (
+            self.worker
+            or self._pending_close
+            or self.session_id != session_id
+            or generation != self._steering_restart_generation
+            or not self.store.pending_steering(session_id)
+        ):
+            return
+        self.stream_message = None
+        self._stream_prefix_before_update = ""
+        self.start_work(
+            lambda cancel, emit: self.engine.run(
+                session_id, "", [], options, cancel, emit
+            ),
+            self.chat_finished,
+            session_id=session_id,
+            options=options,
+        )
+
+    def start_work(
+        self,
+        action: Callable,
+        finished: Callable | None = None,
+        *,
+        session_id: str | None = None,
+        options: dict | None = None,
+    ) -> None:
+        """Serialize jobs and explicitly distinguish steerable chats from other work."""
         if self.worker:
             self.show_error(
                 "Another operation is still running. Stop it before starting this one."
             )
             return
+        self._steering_restart_generation += 1
+        self._active_chat_session_id = session_id
+        self._active_chat_options = copy.deepcopy(options) if session_id else None
+        self._active_chat_succeeded = False
+        self._stream_prefix_before_update = ""
         self.error_seen = False
         self.error_label.hide()
         self.worker = Worker(action, self)
@@ -1389,7 +1551,7 @@ class MainWindow(QMainWindow):
             self.worker.result.connect(finished)
         self.worker.failed.connect(self.show_error)
         self.worker.finished.connect(self.work_finished)
-        self.send_button.setEnabled(False)
+        self.update_send_mode()
         self.continue_button.setEnabled(False)
         self.generate_button.setEnabled(False)
         self.workspace_button.setEnabled(False)
@@ -1403,6 +1565,7 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def stop(self) -> None:
+        self._steering_restart_generation += 1
         if self.worker:
             self.worker.cancel.set()
             self.run_status.setText("◌ Stopping…")
@@ -1413,12 +1576,20 @@ class MainWindow(QMainWindow):
     def work_finished(self) -> None:
         old = self.worker
         stopped = bool(old and old.cancel.is_set())
+        session_id = self._active_chat_session_id
+        options = self._active_chat_options
+        successful = self._active_chat_succeeded and not self.error_seen and not stopped
+        delegated = bool(self._delegation_job_id)
+        generation = self._steering_restart_generation
         self.worker = None
+        self._active_chat_session_id = None
+        self._active_chat_options = None
+        self._active_chat_succeeded = False
         self._delegation_job_id = None
         self._delegation_session_id = None
         if old:
             old.deleteLater()
-        self.send_button.setEnabled(True)
+        self.update_send_mode()
         self.continue_button.setEnabled(True)
         self.generate_button.setEnabled(True)
         self.workspace_button.setEnabled(True)
@@ -1434,12 +1605,27 @@ class MainWindow(QMainWindow):
             else "◌ Stopped" if stopped else "● Ready"
         )
         self.reload_sessions()
+        pending = self.refresh_pending_steering()
         if self._pending_close:
             self.close()
+        elif successful and session_id and not delegated and pending:
+            QTimer.singleShot(
+                0,
+                lambda: self._resume_late_steering(
+                    session_id, options or {}, generation
+                ),
+            )
 
     def chat_finished(self, result: Any) -> None:
         if isinstance(result, dict):
+            self._active_chat_succeeded = result.get("status") == "completed"
             text = result.get("content") or result.get("text") or result.get("response")
+            if (
+                isinstance(text, str)
+                and self._stream_prefix_before_update
+                and text.startswith(self._stream_prefix_before_update)
+            ):
+                text = text[len(self._stream_prefix_before_update) :]
             if text and (
                 not self.stream_message or self.stream_message.content != text
             ):
@@ -1501,6 +1687,7 @@ class MainWindow(QMainWindow):
             self.memory_view.setMarkdown(str(payload.get("text", "")))
             self.memory_view.setToolTip(str(payload.get("path", "")))
         elif event == "tool":
+            self._stream_prefix_before_update = ""
             name = str(payload.get("name", "tool"))
             state = str(payload.get("status", ""))
             detail = payload.get("result", payload.get("arguments", {}))
@@ -1518,6 +1705,21 @@ class MainWindow(QMainWindow):
                 f"<p><b>{html.escape(name)}</b> · {html.escape(state)}</p><pre>{html.escape(rendered)}</pre>"
             )
             self.stream_message = None
+        elif event == "steering_applied":
+            for identity in payload.get("ids", []):
+                bubble = self._steering_bubbles.get(str(identity))
+                if bubble:
+                    bubble.set_content(
+                        bubble.content.removesuffix("\n\n*Queued update*")
+                        + "\n\n*Added to model context*"
+                    )
+            self._stream_prefix_before_update = ""
+            self.stream_message = None
+            text = "Update added to the model's next prompt. Continuing with the updated request."
+            self.steering_status.setText(text)
+            self.steering_status.show()
+            self.activity.append("<p>" + html.escape(text) + "</p>")
+            self.statusBar().showMessage(text)
         elif event == "review_skipped":
             # A skipped external review is neither local failure nor verified success.
             # Keep the answer and its streaming widget intact as local work continues.
@@ -2207,6 +2409,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Do not destroy a running QThread; request a cooperative stop before exit."""
+        self._steering_restart_generation += 1
         if self.worker:
             self._pending_close = True
             self.stop()

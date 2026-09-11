@@ -68,3 +68,13 @@ Final regression suite: 135 tests passed in 9.99 seconds. Python compilation and
 ## Simple-chat review allowance fix
 
 144 tests passed in 10.47 seconds. New cases cover plain chat following old tool history, budget caps at initial planning, milestone and final review, an affordable plan followed by an unaffordable final review, continued local write/read verification, reviewer-requested correction, visible provider errors, persisted review scope and neutral skipped-review display. A deterministic comparison against b6ae8cb reproduced two automatic review calls before and zero after for simple chat. An insufficient allowance previously caused an error and now allows local completion. No new provider or GPU calls were needed.
+
+## Live prompt updates, 2026-09-11
+
+A real Qwen3.5 4B abliterated CPU run accepted a message through the GUI's Send update action while the worker was predicting. The queued message was inserted exactly once, the model returned the requested unique revised answer, the task completed with no pending messages, and the applied event was visible. Total elapsed time was 93.227 seconds, including CPU model startup and prompt processing. No external reviews ran. LM Studio's existing GPU process was left running. Reproduce with `python scripts/check_steering.py`; private evidence is under `.local/verification/steering`.
+
+The regression suite covers updates during prediction, between tool calls, after final answers, during memory and context compaction, and after Stop/restart. It verifies that completed writes remain intact, stale undispatched writes are skipped, message order is preserved, and messages are not duplicated. UI cases cover frozen settings, late completion, pending-message display, unsent drafts, and rejecting attachments or updates to unrelated operations.
+
+A deterministic comparison against a1646cc uses the real GUI, worker, engine and SQLite repository with scripted model output. Previously the active-task send was not handled; now it is saved, delivered and produces the scripted revised response. [CSV](benchmarks/steering.csv) and [figure](benchmarks/steering.png) record behavior, not model quality or timing. Run `python scripts/benchmark_steering.py --before a1646cc` to reproduce.
+
+Final live-steering suite: 166 tests passed in 11.89 seconds. Python compilation and whitespace checks passed. The isolated CPU server was released after verification; the existing LM Studio GPU process was not interrupted.
