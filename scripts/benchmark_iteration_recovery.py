@@ -165,7 +165,7 @@ def main():
                 for row in json.loads((out / "probe.json").read_text())
             )
     with (args.output / "comparison.csv").open("w") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     import matplotlib
@@ -204,6 +204,11 @@ def main():
     )
     for extension in ("png", "pdf", "svg"):
         fig.savefig(args.output / f"comparison.{extension}", dpi=180)
+    # Keep generated vector assets clean for repository whitespace checks.
+    svg = args.output / "comparison.svg"
+    svg.write_text(
+        "\n".join(line.rstrip() for line in svg.read_text().splitlines()) + "\n"
+    )
     print(json.dumps(rows, indent=2))
 
 
