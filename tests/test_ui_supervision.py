@@ -123,7 +123,7 @@ def test_advanced_review_settings_are_collapsed_and_remain_available(tmp_path):
     window.supervisor_provider.setCurrentIndex(
         window.supervisor_provider.findData("codex-cli")
     )
-    assert window.token_budget.value() == 60000
+    assert window.token_budget.value() == 200000
     window.token_budget.setValue(40000)
     window.supervisor_provider.setCurrentIndex(
         window.supervisor_provider.findData("claude-cli")

@@ -278,8 +278,14 @@ class LocalTools:
             if not path.is_relative_to(self.workspace) and (
                 write or str(path) not in self.options.get("_approved_read_paths", [])
             ):
+                # A truthful refusal names the boundary. Variations of the same
+                # out-of-workspace path can never satisfy it, so the model is told
+                # to report the limit instead of guessing further paths.
                 raise PermissionError(
-                    "Path is outside the selected workspace. Use a workspace-relative path, or list_directory with path . to inspect available names."
+                    f"{'Writing to' if write else 'Reading'} {path} is refused: it is outside the selected "
+                    f"workspace {self.workspace}. Path variants of the same location will also be refused. "
+                    "Work inside the workspace, or state in a visible answer that the user must select "
+                    "that folder as the workspace before this step can proceed."
                 )
         if write and path.is_relative_to(self.store.root):
             raise PermissionError(
@@ -458,7 +464,18 @@ class LocalTools:
     def _command(self, args, wait):
         """Run a standalone worker; poll rather than holding a tool request indefinitely."""
         command = args["command"]
-        cwd = self.path(args.get("cwd") or str(self.workspace), write=True)
+        # The working directory follows the same boundary as reads. A stricter
+        # rule here protected nothing, because the command text itself may cd
+        # anywhere; it only made readable data unusable and drove retry loops.
+        # Writes, application state and raw measurement files stay protected.
+        requested = args.get("cwd") or str(self.workspace)
+        cwd = self.path(requested)
+        if not cwd.is_dir():
+            raise FileNotFoundError(
+                f"Working directory {cwd} does not exist. Relative values resolve inside the "
+                f"workspace {self.workspace}; give an existing absolute directory instead, or "
+                "list_directory its parent first."
+            )
         if not isinstance(command, str) or len(command) > 20000:
             raise ValueError("Command is too large.")
         identifier = uuid.uuid4().hex

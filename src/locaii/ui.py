@@ -760,7 +760,7 @@ class MainWindow(QMainWindow):
         self.token_budget = QSpinBox()
         self.token_budget.setRange(256, 1000000)
         self.token_budget.setSingleStep(1000)
-        self.token_budget.setValue(60000)
+        self.token_budget.setValue(200000)
         self.remote_enabled = QCheckBox(
             "Allow objective, file excerpts, and evidence to reach the selected external supervisor"
         )
@@ -802,8 +802,9 @@ class MainWindow(QMainWindow):
             form.addRow(name, widget)
         content.addLayout(form)
         self.supervisor_allowance_hint = label(
-            "CLI reviews include substantial agent context. Increase the allowance to at least "
-            "24,000 tokens before running automatic CLI reviews, or choose manual review.",
+            "CLI reviews include substantial agent context: one measured Codex review charged about "
+            "17,000 tokens and each review reserves 18,000 more. Below roughly 60,000 tokens only a single "
+            "review fits and later ones are skipped. Raise the allowance, or choose manual review.",
             "warning",
             True,
         )
@@ -1069,7 +1070,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "supervisor_allowance_hint"):
             self.supervisor_allowance_hint.setVisible(
                 self.supervisor_provider.currentData() in {"codex-cli", "claude-cli"}
-                and self.token_budget.value() < 24000
+                and self.token_budget.value() < 60000
             )
 
     def navigate(self, index: int) -> None:

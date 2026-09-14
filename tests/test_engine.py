@@ -185,12 +185,26 @@ def test_resume_write_receipt_does_not_hide_external_file_change(task):
     (workspace / "result.md").write_text("external revision")
     repeated = dict(request, id="repeat")
     model = FakeModels(
-        [answer("", [repeated], "tool_calls"), answer("The target changed.")]
+        [
+            answer("", [repeated], "tool_calls"),
+            answer("The target changed."),
+            answer("The target changed; I could not verify the write."),
+        ]
     )
-    with pytest.raises(RuntimeError, match="unresolved tool failures"):
-        run(Engine(store, model), identifier, "Continue")
+    result = run(Engine(store, model), identifier, "Continue")
+    # The partial answer is kept, but the unresolved failure is reported with it
+    # instead of discarding the turn; the external revision is never overwritten.
+    assert result["status"] == "completed"
+    assert result["unresolved_tool_failures"][0]["tool"] == "write_file"
+    assert any(
+        "unresolved" in m.get("content", "")
+        for m in model.prompts[1] + model.prompts[2]
+    )
     assert (workspace / "result.md").read_text() == "external revision"
-    assert "changed or disappeared" in store.messages(identifier)[-2]["content"]
+    assert any(
+        "changed or disappeared" in str(m.get("content", ""))
+        for m in store.messages(identifier)
+    )
 
 
 def test_incomplete_answer_continues_without_false_completion(task):
@@ -456,15 +470,16 @@ def test_resume_does_not_repeat_command_with_unobserved_outcome(task):
                 "tool_calls",
             ),
             answer("Cannot verify the previous command yet."),
+            answer("The earlier command outcome is unknown and was not repeated."),
         ]
     )
-    with pytest.raises(RuntimeError, match="unresolved tool failures"):
-        run(
-            Engine(store, models),
-            identifier,
-            "Continue",
-            options={"allow_terminal": True},
-        )
+    result = run(
+        Engine(store, models),
+        identifier,
+        "Continue",
+        options={"allow_terminal": True},
+    )
+    assert result["unresolved_tool_failures"][0]["tool"] == "run_command"
     assert not list((store.task_dir(identifier) / "jobs").glob("*.json"))
     results = [m for m in store.messages(identifier) if m["role"] == "tool"]
     assert "unknown" in results[-1]["content"]

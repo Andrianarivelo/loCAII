@@ -176,7 +176,7 @@ class Supervisor:
             + canonical(packet)
         )
         estimated = (len(prompt) + 2) // 3
-        budget = max(0, int(options.get("supervisor_token_budget", 20000)))
+        budget = max(0, int(options.get("supervisor_token_budget", 200000)))
         previous = self.store.supervisor_tokens(session_id, remote_only=True)
         # CLI agents add hidden system/tool context; the measured local Codex
         # invocation used ~14K tokens for a 2K-character packet. Reserve headroom.

@@ -78,3 +78,20 @@ The regression suite covers updates during prediction, between tool calls, after
 A deterministic comparison against a1646cc uses the real GUI, worker, engine and SQLite repository with scripted model output. Previously the active-task send was not handled; now it is saved, delivered and produces the scripted revised response. [CSV](benchmarks/steering.csv) and [figure](benchmarks/steering.png) record behavior, not model quality or timing. Run `python scripts/benchmark_steering.py --baseline a1646cc` to reproduce.
 
 Final live-steering suite: 166 tests passed in 11.89 seconds. Python compilation and whitespace checks passed. The isolated CPU server was released after verification; the existing LM Studio GPU process was not interrupted.
+
+## Long-task survival, 2026-09-14
+
+A recorded real session failed while surveying a dataset stored on a separate volume with the workspace left at the home directory. Four causes were identified in its saved events, not inferred:
+
+1. Reads reached the data volume while `run_command` refused any working directory outside the workspace. That restriction protected nothing, because the command text itself can change directory, and it made already-readable data unusable. The model alternated between refused absolute paths and workspace-relative guesses. The working directory now follows the same boundary as reads; writes, application state and raw measurement files stay protected, and a refusal names the actual workspace and tells the model to stop trying variants.
+2. Four consecutive tool failures ended the whole turn. Three consecutive failures now deliver corrective guidance carrying the workspace path and the observed errors, and the turn stops only if failures continue after two such corrections. A final answer accompanied by unresolved failures is delivered once with a visible warning and an `unresolved_tool_failures` field rather than converted into an error that hides completed work.
+3. Compaction triggered at 60 percent of the context and retained only the last six verbose receipts, so a completed directory survey was discarded and re-derived, refilling the context that had just been freed. Compaction now triggers at 75 percent and carries a one-line-per-observation ledger of every successful action, shed only after the verbose tail if the budget is tight.
+4. Identical repeated results were carried several times in one prompt. Superseded duplicates are now stubbed with a pointer; the durable store keeps every original receipt.
+
+The Codex allowance default rose to 200,000 tokens and the insufficient-headroom hint now appears below 60,000, because one measured CLI review charged 17,178 tokens and each review reserves 18,000 more. A 24,000-token allowance affords a single review, after which every later one is skipped.
+
+A real Qwen3.5 9B abliterated GPU run with 32K context completed the recorded failure shape in 59.78 seconds: it surveyed a synthetic animal/session/trial tree outside its workspace, read a metadata file, ran a shell command inside that directory and reported the verification code present only in the data. Every dataset file hash and modification time was unchanged, no read or shell call was refused, and no tool call failed. Reproduce with `python scripts/check_long_task.py`; private evidence is under `.local/verification/long-task`.
+
+A deterministic before/after comparison replays the same scripted model against both source versions. The previous version aborted with four consecutive tool failures, never ran a shell command in the readable data, and lost the directory survey across two compactions; the current version completes, uses the shell, delivers corrective guidance and keeps the survey through one compaction. [CSV](benchmarks/long-tasks.csv) and [figure](benchmarks/long-tasks.png) record failure handling and context cost, not model quality or speed. Run `python scripts/benchmark_long_tasks.py --baseline c705034` to reproduce.
+
+Final suite: 176 tests passed in 11.22 seconds. Python compilation and whitespace checks passed. The isolated GPU server was released after verification.
