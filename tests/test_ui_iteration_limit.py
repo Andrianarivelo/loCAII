@@ -48,3 +48,18 @@ def test_loop_recovery_explanation_is_visible(tmp_path, monkeypatch):
         assert not window.error_seen
     finally:
         window.close()
+
+
+def test_missing_input_is_shown_as_attention_not_success(tmp_path, monkeypatch):
+    """The deterministic input diagnosis must survive worker completion visibly."""
+    monkeypatch.setenv("LOCAII_HOME", str(tmp_path))
+    _, window, _ = create_window(tmp_path)
+    try:
+        explanation = "Current CSV has zero data rows. Provide an intact original."
+        window.chat_finished({"status": "needs_attention", "text": explanation})
+        assert window.error_seen
+        assert not window._active_chat_succeeded
+        assert explanation in window.activity.toPlainText()
+        assert window.stream_message.content == explanation
+    finally:
+        window.close()

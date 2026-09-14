@@ -1,6 +1,8 @@
 """Bounded local tools with visible receipts, backups, and durable terminal jobs."""
 
 from __future__ import annotations
+import csv
+from collections import defaultdict
 import importlib.util
 import json
 import os
@@ -34,6 +36,15 @@ RAW_SUFFIXES = {
     ".edf",
 }
 MAX_READ = 12000
+CSV_MAX_BYTES = 2 * 1024 * 1024
+CSV_MAX_RECORD_BYTES = 256 * 1024
+CSV_MAX_CELLS = 200000
+CSV_MAX_SCAN_ROWS = 10000
+CSV_MAX_HEADER_COLUMNS = 20000
+
+
+class _CsvInspectionLimit(Exception):
+    """End a bounded inspection without pretending the file ended."""
 
 
 def schema(name, description, properties, required=()):
@@ -121,6 +132,29 @@ class LocalTools:
                 ["path"],
             ),
             schema(
+                "inspect_csv",
+                "Inspect CSV/TSV structure and actual data rows without dumping wide headers. Read-only UTF-8. Select column_indices (zero-based) OR exact column_names (all matches in file order, including duplicates, up to 20). Row offsets are zero-based; EOF and partial counts are explicit.",
+                {
+                    "path": string(),
+                    "column_indices": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "minItems": 1,
+                        "items": {"type": "integer", "minimum": 0},
+                    },
+                    "column_names": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "minItems": 1,
+                        "items": {"type": "string", "maxLength": 1024},
+                    },
+                    "offset_rows": {"type": "integer", "minimum": 0},
+                    "max_rows": {"type": "integer", "minimum": 1, "maximum": 20},
+                    "max_columns": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                ["path"],
+            ),
+            schema(
                 "search_files",
                 "Find filenames recursively inside a directory. Returns up to 100 paths.",
                 {"path": string(), "pattern": string()},
@@ -203,7 +237,7 @@ class LocalTools:
                 ),
                 schema(
                     "run_command",
-                    "Run a shell command in the workspace. After 15s returns a job_id to poll; never assume a running job succeeded.",
+                    "Run a command with read-only inputs and no network. Write derived results to $LOCAII_OUTPUT_DIR and scratch files to $LOCAII_WORK_DIR. After 15s returns a job_id to poll.",
                     {
                         "command": string(),
                         "cwd": string(),
@@ -213,7 +247,7 @@ class LocalTools:
                 ),
                 schema(
                     "start_command",
-                    "Start a durable background shell job; use poll_command to observe completion.",
+                    "Start a read-only-input shell job, without network. Write only to $LOCAII_OUTPUT_DIR or $LOCAII_WORK_DIR; poll_command observes completion.",
                     {
                         "command": string(),
                         "cwd": string(),
@@ -384,6 +418,225 @@ class LocalTools:
             "extraction_limited": True,
         }
 
+    def inspect_csv(self, args):
+        """Sample parsed records within fixed work bounds; never change source bytes.
+
+        Physical lines are decoded intact, preserving quoted newlines and UTF-8.
+        A partial line or oversized logical record is never passed off as a
+        complete CSV record. Counts include only fully parsed nonblank records.
+        """
+        path = self.path(args["path"])
+        size = path.stat().st_size
+        offset = max(0, int(args.get("offset_rows", 0)))
+        maximum = min(20, max(1, int(args.get("max_rows", 5))))
+        columns_max = min(20, max(1, int(args.get("max_columns", 12))))
+        if "column_indices" in args and "column_names" in args:
+            raise ValueError("Use column_names or column_indices, not both.")
+        result = {
+            "path": str(path),
+            "size_bytes": size,
+            "delimiter": "\t" if path.suffix.lower() == ".tsv" else ",",
+            "column_count": None,
+            "columns_preview": [],
+            "selected_columns": [],
+            "selection_truncated": False,
+            "unmatched_column_names": None if "column_names" in args else [],
+            "duplicate_header_names": [],
+            "rows": [],
+            "offset_rows": offset,
+            "rows_examined": 0,
+            "total_data_rows": None,
+            "eof_reached": False,
+            "header_only": None,
+            "next_offset_rows": None,
+            "limitations": [],
+        }
+        bytes_read = 0
+        record_bytes = 0
+        # Reserve half the payload for actual data even when names are huge.
+        text_budget = 2000
+
+        def preview(value):
+            """Bound every returned name/cell and the combined text payload."""
+            nonlocal text_budget
+            take = min(160, text_budget, len(value))
+            while (
+                take and len(json.dumps(value[:take], ensure_ascii=True)) > text_budget
+            ):
+                take -= 1
+            text_budget = max(
+                0, text_budget - len(json.dumps(value[:take], ensure_ascii=True))
+            )
+            if take < len(value):
+                result["text_truncated"] = True
+            return value[:take]
+
+        def lines(handle):
+            """Yield only complete physical lines with cancellation between reads."""
+            nonlocal bytes_read, record_bytes
+            first = True
+            while True:
+                if self.cancel.is_set():
+                    raise InterruptedError("Task stopped by user.")
+                allowance = min(
+                    CSV_MAX_BYTES - bytes_read,
+                    CSV_MAX_RECORD_BYTES - record_bytes,
+                )
+                # The extra byte establishes a bound violation without ever
+                # allocating an unbounded line or inventing EOF at the budget.
+                raw = handle.readline(max(0, allowance) + 1)
+                if not raw:
+                    return
+                bytes_read += len(raw)
+                record_bytes += len(raw)
+                if len(raw) > allowance:
+                    raise _CsvInspectionLimit(
+                        "Byte or logical-record limit reached; remaining records are unknown."
+                    )
+                yield raw.decode("utf-8-sig" if first else "utf-8")
+                first = False
+
+        header = None
+        cell_count = 0
+        repeated_headers = 0
+        try:
+            with path.open("rb") as handle:
+                reader = csv.reader(
+                    lines(handle), delimiter=result["delimiter"], strict=True
+                )
+                try:
+                    header = next(reader)
+                except StopIteration:
+                    result["eof_reached"] = True
+                    result["column_count"] = 0
+                    result["unmatched_column_names"] = [
+                        preview(name) for name in args.get("column_names", [])
+                    ]
+                if header is not None:
+                    record_bytes = 0
+                    result["column_count"] = len(header)
+                    if len(header) > CSV_MAX_HEADER_COLUMNS:
+                        raise _CsvInspectionLimit(
+                            "Header column limit reached; data rows were not inspected."
+                        )
+                    positions = defaultdict(list)
+                    for index, name in enumerate(header):
+                        if self.cancel.is_set():
+                            raise InterruptedError("Task stopped by user.")
+                        positions[name].append(index)
+                    if "column_names" in args:
+                        # Match against the entire header before previewing it;
+                        # wide files and duplicate labels keep their positions.
+                        names = set(args["column_names"])
+                        matches = [i for i, name in enumerate(header) if name in names]
+                        indices = matches[:20]
+                        result["selection_truncated"] = len(matches) > 20
+                        result["unmatched_column_names"] = [
+                            preview(name)
+                            for name in dict.fromkeys(args["column_names"])
+                            if name not in positions
+                        ]
+                    else:
+                        indices = args.get(
+                            "column_indices", list(range(min(columns_max, len(header))))
+                        )
+                    if any(index >= len(header) for index in indices):
+                        raise ValueError(
+                            f"column_indices must be below the observed column_count {len(header)}."
+                        )
+                    result["columns_preview"] = [
+                        {"index": index, "name": preview(name)}
+                        for index, name in enumerate(header[:columns_max])
+                    ]
+                    result["columns_preview_truncated"] = len(header) > columns_max
+                    result["selected_columns"] = [
+                        {"index": index, "name": preview(header[index])}
+                        for index in indices
+                    ]
+                    duplicates = [
+                        (name, positions_)
+                        for name, positions_ in positions.items()
+                        if len(positions_) > 1
+                    ]
+                    result["duplicate_header_name_count"] = len(duplicates)
+                    result["duplicate_header_names"] = [
+                        {
+                            "name": preview(name),
+                            "indices": positions_[:20],
+                            "occurrences": len(positions_),
+                        }
+                        for name, positions_ in duplicates[:20]
+                    ]
+                    result["duplicate_header_names_truncated"] = len(
+                        duplicates
+                    ) > 20 or any(len(p) > 20 for _, p in duplicates[:20])
+                    text_budget += 2000
+                    cell_count = len(header)
+                    while True:
+                        if self.cancel.is_set():
+                            raise InterruptedError("Task stopped by user.")
+                        if (
+                            result["rows_examined"] >= CSV_MAX_SCAN_ROWS
+                            or cell_count >= CSV_MAX_CELLS
+                        ):
+                            raise _CsvInspectionLimit(
+                                "Row/cell scan limit reached; total row count is unknown."
+                            )
+                        try:
+                            row = next(reader)
+                        except StopIteration:
+                            result["eof_reached"] = True
+                            break
+                        record_bytes = 0
+                        cell_count += len(row)
+                        if cell_count > CSV_MAX_CELLS:
+                            raise _CsvInspectionLimit(
+                                "Cell scan limit reached; total row count is unknown."
+                            )
+                        row_index = result["rows_examined"]
+                        result["rows_examined"] += 1
+                        repeated_headers += row == header
+                        # One look-ahead record proves that the sample has a
+                        # next page. It is not silently counted as a shown row.
+                        if len(result["rows"]) >= maximum:
+                            result["next_offset_rows"] = offset + len(result["rows"])
+                            break
+                        if row_index >= offset:
+                            result["rows"].append(
+                                {
+                                    "row_index": row_index,
+                                    "column_count": len(row),
+                                    "values": [
+                                        preview(row[i]) if i < len(row) else None
+                                        for i in indices
+                                    ],
+                                    "matches_header": row == header,
+                                }
+                            )
+        except (_CsvInspectionLimit, csv.Error, UnicodeDecodeError) as error:
+            result["limitations"].append(str(error))
+        result["bytes_read"] = bytes_read
+        result["repeated_header_rows_observed"] = repeated_headers
+        if result["eof_reached"]:
+            result["total_data_rows"] = result["rows_examined"]
+            result["header_only"] = header is not None and result["rows_examined"] == 0
+            if result["header_only"]:
+                result["note"] = (
+                    "Only a header was found in this file. This does not establish whether an earlier copy was truncated; compare with the original source."
+                )
+        result["row_count_is_lower_bound"] = not result["eof_reached"]
+        if result["limitations"]:
+            result["note"] = (
+                "Inspection is partial. Do not infer missing data or EOF from these limits; use a suitable bounded parser or another source."
+            )
+        # JSON escaping can expand control characters sixfold. Keep the actual
+        # protocol payload bounded as well as the human-readable text budget.
+        while len(json.dumps(result, ensure_ascii=True)) > MAX_READ and result["rows"]:
+            result["rows"].pop()
+            result["next_offset_rows"] = offset + len(result["rows"])
+            result["text_truncated"] = True
+        return result
+
     def _job_path(self, identifier):
         """Accept only generated IDs within this task's command directory."""
         if not re.fullmatch("[0-9a-f]{32}", identifier):
@@ -461,13 +714,15 @@ class LocalTools:
             return {"job_id": identifier, "status": "cancellation_requested"}
         return {"job_id": identifier, "status": job["status"]}
 
+    def command_output_root(self):
+        """Return a dedicated per-task output area, never a selected source folder."""
+        return self.workspace / "locaii-results" / self.session_id
+
     def _command(self, args, wait):
         """Run a standalone worker; poll rather than holding a tool request indefinitely."""
         command = args["command"]
-        # The working directory follows the same boundary as reads. A stricter
-        # rule here protected nothing, because the command text itself may cd
-        # anywhere; it only made readable data unusable and drove retry loops.
-        # Writes, application state and raw measurement files stay protected.
+        # Commands may read their chosen cwd, but the worker mounts inputs
+        # read-only and permits writes only in a fresh task output area.
         requested = args.get("cwd") or str(self.workspace)
         cwd = self.path(requested)
         if not cwd.is_dir():
@@ -478,6 +733,20 @@ class LocalTools:
             )
         if not isinstance(command, str) or len(command) > 20000:
             raise ValueError("Command is too large.")
+        write_roots = []
+        output_root = self.command_output_root()
+        if self.options.get("workspace_writes", False):
+            for name in ("work", "outputs"):
+                requested_root = output_root / name
+                # Refuse symlink redirects, including any existing ancestor.
+                if requested_root.absolute() != requested_root.resolve():
+                    raise PermissionError("Task output directory cannot be a symlink.")
+                if requested_root.resolve().is_relative_to(self.store.root):
+                    raise PermissionError(
+                        "Application state cannot be a command output directory."
+                    )
+                requested_root.mkdir(parents=True, exist_ok=True)
+                write_roots.append(str(requested_root))
         identifier = uuid.uuid4().hex
         path = self._job_path(identifier)
         atomic_json(
@@ -487,6 +756,8 @@ class LocalTools:
                 "status": "starting",
                 "command": command,
                 "cwd": str(cwd),
+                "write_roots": write_roots,
+                "output_directory": str(output_root / "outputs"),
                 "timeout": min(86400, max(1, int(args.get("timeout", 3600)))),
                 "created": time.time(),
             },
@@ -568,6 +839,8 @@ class LocalTools:
                     if len(self.cache) >= 128:
                         self.cache.clear()
                     self.cache[snapshot] = dict(result)
+            elif name == "inspect_csv":
+                result = self.inspect_csv(args)
             elif name == "search_files":
                 root = self.path(args["path"])
                 matches = []

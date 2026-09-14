@@ -1718,7 +1718,9 @@ class MainWindow(QMainWindow):
                     self.stream_message.set_content(str(text))
                 else:
                     self.stream_message = self.add_message("assistant", str(text))
-            if result.get("status") in {"error", "failed"}:
+            if result.get("status") == "needs_attention":
+                self.show_error(str(text or "Provide the missing input to continue."))
+            elif result.get("status") in {"error", "failed"}:
                 self.show_error(
                     str(
                         result.get("error")

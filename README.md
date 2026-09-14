@@ -23,7 +23,7 @@ loCAII runs its own **llama.cpp** model server and talks directly to **ComfyUI**
 3. **Models:** import additional GGUF weights, attach a matching vision projector, and edit model/context settings. Built-in profiles cover the existing Qwen3.5 4B/9B and Qwen3.8 27B abliterated weights. Start with 9B for more demanding tasks. The **CPU-only preset** uses 8K context and no GPU allocation when another application is using the GPU.
 4. **Supervision:** choose local, manual, Codex CLI, Claude CLI, OpenAI API or Anthropic API review. Local iterations do the work; the reviewer supplies plans, checks evidence and requests another iteration when needed. Remote review is off by default.
 
-File tools can read across the computer when enabled. Explicit attachments remain readable even when general reads are restricted to the workspace. Native writes stay within the selected workspace, retain backups and protect existing measurement/metadata files. **Optional shell commands and installed Python extensions run with your user account's permissions; native file-tool protections are not an operating-system sandbox.**
+File tools can read across the computer when enabled. Explicit attachments remain readable even when general reads are restricted to the workspace. Native writes stay within the selected workspace, retain backups and protect existing measurement/metadata files. **Shell commands now require Linux bubblewrap:** source locations are mounted read-only, network access is isolated, and only this task's dedicated `locaii-results/<task-id>/work` and `outputs` directories are writable. Commands use `$LOCAII_WORK_DIR` and `$LOCAII_OUTPUT_DIR`; shell-based source edits and downloads must use the appropriate file/network tools instead. Missing sandbox support refuses the command. Installed Python extensions remain trusted code outside this shell boundary; this prevents the reproduced accidental overwrite, not every possible hostile-code attack.
 
 Text, PDF, DOCX and XLSX attachments have bounded extraction. Images use the model's matching vision projector. Binary formats without an extractor are identified rather than decoded as bogus text. Arbitrary PDF layouts, very large documents and model visual reasoning are not guaranteed to be interpreted correctly.
 
@@ -114,3 +114,42 @@ port, cancels a synthetic generation, and records child exit, cancellation laten
 and GPU memory before/load/after. Run only with sufficient idle GPU capacity.
 It does not unload another application's model. All fixtures and reports remain
 private under `.local/verification/stop-release`.
+
+## Evidence-based table work
+
+Use `inspect_csv` for CSV/TSV rows instead of rereading a large text header. It
+supports column names or positions, duplicate names, quoted records and wide
+tables, and reports actual file size, sampled rows and verified EOF. A zero-row
+file cannot establish coordinate values or differences. Bounded or malformed
+reads report their limits without pretending the whole table was examined.
+
+The active prompt and observation ledger prefer the newest receipt, even when
+it is shorter than an older result. Distinct row pages and column selections stay
+separate. The first CSV text read also provides a recorded, read-only inspection
+of actual rows, selecting named columns from the user's request when available.
+On repeated reads, recovery rebuilds the prompt from user instructions and
+observed receipts instead of recycling the model's unverified recap. Changing
+column selectors on a header-only file does not count as progress. If repeated
+reads still seek absent rows, the app rechecks the file and pauses with specific
+verified facts. An empty template is not automatically a damaged file. All
+original history remains archived without rewriting.
+
+On Ubuntu, install the system `bubblewrap` package for terminal tools if it is
+missing. This is required, not an optional unsafe fallback. Direct file tools
+continue to support authorized code edits, with their existing original-data
+protection. No repair in this version reconstructs measurement data already lost
+before it was installed; use verified original acquisition exports or backups.
+
+
+`python scripts/benchmark_evidence_safety.py` compares the prior commit with the
+current implementation on three synthetic regressions: newest evidence, blocked
+source overwrite, and header-only detection. CSV and PNG/PDF/SVG results are in
+`docs/benchmarks/evidence-safety.*`; provenance is under `.local/verification`.
+These are mechanism checks, not a model-intelligence score.
+
+`python scripts/check_evidence_reasoning.py` exercises the real local 9B model
+against an empty CSV and a valid wide CSV with stale prior assistant claims.
+The first case succeeds only with a correct empty-input diagnosis; it is not
+counted as completed analysis. The second must answer the comparison. Test files
+and model state are isolated, input hashes are checked, and the private GPU worker
+is released afterward. Earlier failed trials remain in private reports.

@@ -1,0 +1,7 @@
+version,scenario,passed,observed
+baseline,latest_receipt,0,newer shorter receipt hidden
+baseline,source_integrity,0,16034 to 5000 bytes; command completed
+baseline,header_only,0,native table inspection unavailable or inconclusive
+current,latest_receipt,1,latest receipt retained
+current,source_integrity,1,16034 to 16034 bytes; command failed
+current,header_only,1,zero data rows identified
