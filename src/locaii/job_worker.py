@@ -11,23 +11,22 @@ from .storage import atomic_json
 
 
 def sandbox_command(job):
-    """Keep source files read-only and permit writes only to declared outputs.
+    """Apply the task's write permission to shell access.
 
-    The caller creates dedicated result directories and passes their absolute
-    paths in ``write_roots``. A missing sandbox is an error, never permission to
-    execute a model-generated shell command directly on the host filesystem.
-    Linux mount isolation also protects against symlinks in result directories
-    that point back to source data outside the writable mounts.
+    With source writes enabled, the shell can modify files allowed by the
+    operating-system account. Read-only tasks retain the restricted mounts.
+    Network and process isolation apply to both modes.
     """
     executable = shutil.which("bwrap")
     if executable is None:
         raise RuntimeError(
-            "Command refused: bubblewrap (bwrap) is required to protect source "
-            "files. Install bubblewrap before running terminal commands."
+            "Command refused: bubblewrap (bwrap) is required for terminal isolation. "
+            "Install bubblewrap before running terminal commands."
         )
     roots = job.get("write_roots", [])
     if not isinstance(roots, list) or not all(isinstance(p, str) for p in roots):
         raise ValueError("Command refused: write_roots must be a list of directories.")
+    source_writes = job.get("allow_source_writes") is True
     command = [
         executable,
         "--die-with-parent",
@@ -36,7 +35,7 @@ def sandbox_command(job):
         "--unshare-net",
         "--cap-drop",
         "ALL",
-        "--ro-bind",
+        "--bind" if source_writes else "--ro-bind",
         "/",
         "/",
         "--proc",
@@ -58,7 +57,9 @@ def sandbox_command(job):
             )
         # A pre-existing hardlink could alias a source inode despite the
         # read-only source mount. Result directories must not contain these.
-        for directory, _subdirectories, files in os.walk(root, followlinks=False):
+        for directory, _subdirectories, files in (
+            () if source_writes else os.walk(root, followlinks=False)
+        ):
             for filename in files:
                 entry = Path(directory) / filename
                 if not entry.is_symlink() and entry.stat().st_nlink > 1:
@@ -156,16 +157,21 @@ def main():
                 err.flush()
                 diagnostic = path.with_suffix(".stderr").read_text(errors="replace")
                 if "Read-only file system" in diagnostic:
-                    allowed = ", ".join(job.get("write_roots", [])) or "none"
-                    job["error"] = (
-                        "Source-file write refused: commands can only write inside "
-                        f"the result directories ({allowed}). Save a derived copy "
-                        "there; original files are read-only."
-                    )
+                    if job.get("allow_source_writes") is True:
+                        job["error"] = (
+                            "The operating system reported a read-only filesystem: "
+                            + diagnostic.strip()
+                        )
+                    else:
+                        job["error"] = (
+                            "Source-file write refused: writes are disabled for this task. "
+                            "Enable workspace writes to allow shell source edits."
+                        )
                 elif "bwrap:" in diagnostic:
                     job["error"] = (
                         "Command sandbox failed to start; the command was not "
-                        "retried without source-file protection. " + diagnostic.strip()
+                        "retried outside the configured isolation. "
+                        + diagnostic.strip()
                     )
             job.update(
                 status=(

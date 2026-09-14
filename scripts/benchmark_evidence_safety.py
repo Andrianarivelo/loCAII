@@ -1,4 +1,4 @@
-"""Compare deterministic evidence and data-protection mechanisms on synthetic files.
+"""Compare deterministic evidence and source-write permissions on synthetic files.
 
 Launch from an IDE or run ``python scripts/benchmark_evidence_safety.py``.
 No model, GPU, real dataset, or live task is used. Each check is one reproducible
@@ -22,7 +22,7 @@ import tempfile
 import threading
 
 # All benchmark and figure parameters are grouped here for straightforward review.
-BASELINE = "5571c2b"
+BASELINE = "0e2fc52"
 OUTPUT_STEM = "evidence-safety"
 PRIVATE_DIRECTORY = ".local/verification/evidence-safety"
 FIGURE_SIZE = (8.8, 3.5)
@@ -30,7 +30,7 @@ FIGURE_DPI = 180
 COLORS = ("#9DA8B2", "#277568")
 SCENARIOS = {
     "latest_receipt": "Keep newest evidence",
-    "source_integrity": "Preserve original bytes",
+    "source_permissions": "Honor write permission",
     "header_only": "Detect header-only CSV",
 }
 
@@ -113,28 +113,58 @@ def probe(source, destination):
             "superseded"
         )
 
-        # Reproduce read-prefix-then-rewrite only on a disposable synthetic source.
-        # PYTHONPATH is inherited by LocalTools' independent durable job worker.
+        # Exercise both permission states against a disposable source outside the
+        # workspace. Enabled writes must make the exact requested edit; disabled
+        # writes must refuse it and leave the fixture unchanged. PYTHONPATH is
+        # inherited by LocalTools' independent durable job worker.
         source_file = root / "synthetic_original_metadata.csv"
         original = b"mouse_1_center_x,mouse_2_center_x\n" + b"1,2\n" * 4000
-        source_file.write_bytes(original)
+        replacement = b"mouse_1_center_x,mouse_2_center_x\n10,20\n11,21\n"
         script = (
             "from pathlib import Path; "
             f"p = Path({str(source_file)!r}); "
-            "prefix = p.read_text()[:5000]; p.write_text(prefix)"
+            f"p.write_bytes({replacement!r})"
         )
-        receipt = local.execute(
-            "run_command",
-            {
-                "command": f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}",
-                "cwd": str(workspace),
-                "timeout": 10,
-            },
-        )
-        after = source_file.read_bytes()
-        source_preserved = after == original
-        # Count this as protection only when a real attempted write was refused.
-        protected = source_preserved and receipt.get("status") == "failed"
+        permission_checks = []
+        for enabled in (True, False):
+            source_file.write_bytes(original)
+            permitted_tools = LocalTools(
+                store,
+                session["id"],
+                {
+                    "workspace_writes": enabled,
+                    "allow_terminal": True,
+                    "read_all_files": True,
+                },
+                threading.Event(),
+                lambda *_: None,
+            )
+            receipt = permitted_tools.execute(
+                "run_command",
+                {
+                    "command": f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}",
+                    "cwd": str(workspace),
+                    "timeout": 10,
+                },
+            )
+            after = source_file.read_bytes()
+            passed = (
+                after == replacement and receipt.get("status") == "completed"
+                if enabled
+                else after == original and receipt.get("status") == "failed"
+            )
+            permission_checks.append(
+                {
+                    "workspace_writes": enabled,
+                    "passed": passed,
+                    "before_sha256": sha256_bytes(original),
+                    "expected_sha256": sha256_bytes(
+                        replacement if enabled else original
+                    ),
+                    "after_sha256": sha256_bytes(after),
+                    "command_receipt": receipt,
+                }
+            )
 
         header = workspace / "header_only.csv"
         header.write_text("mouse_1_center_x,mouse_2_center_x\n")
@@ -154,9 +184,14 @@ def probe(source, destination):
                 ),
             },
             {
-                "scenario": "source_integrity",
-                "passed": int(protected),
-                "observed": f"{len(original)} to {len(after)} bytes; command {receipt.get('status')}",
+                "scenario": "source_permissions",
+                "passed": int(all(check["passed"] for check in permission_checks)),
+                "observed": "; ".join(
+                    f"writes {'enabled' if check['workspace_writes'] else 'disabled'}: "
+                    f"command {check['command_receipt'].get('status')}, "
+                    f"{'expected bytes' if check['after_sha256'] == check['expected_sha256'] else 'unexpected bytes'}"
+                    for check in permission_checks
+                ),
             },
             {
                 "scenario": "header_only",
@@ -177,11 +212,7 @@ def probe(source, destination):
                 "latest_size": latest.get("size_bytes"),
                 "retained_latest": retained,
             },
-            "source_check": {
-                "before_sha256": sha256_bytes(original),
-                "after_sha256": sha256_bytes(after),
-                "command_receipt": receipt,
-            },
+            "source_permission_checks": permission_checks,
             "header_only_receipt": inspection,
         }
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -228,7 +259,7 @@ def plot_results(rows, destination, baseline):
         axis.grid(axis="y", color="#E5E9EB", linewidth=0.7)
     axes[0].set_ylabel("Regression check passed")
     figure.suptitle(
-        "Evidence handling and source-file protection",
+        "Evidence handling and source-write permissions",
         x=0.06,
         ha="left",
         y=0.98,

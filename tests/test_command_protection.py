@@ -30,7 +30,7 @@ def command_job(tmp_path):
     output = tmp_path / "results"
     output.mkdir()
 
-    def launch(command, *, roots=None, timeout=10):
+    def launch(command, *, roots=None, timeout=10, source_writes=False):
         """Run a disposable durable job and return the exact worker receipt."""
         path = tmp_path / "job.json"
         path.write_text(
@@ -40,6 +40,7 @@ def command_job(tmp_path):
                     "cwd": str(tmp_path),
                     "timeout": timeout,
                     "write_roots": [str(output)] if roots is None else roots,
+                    "allow_source_writes": source_writes,
                 }
             )
         )
@@ -170,3 +171,21 @@ def test_cancel_marker_stops_sandbox_and_children(tmp_path):
         if worker.poll() is None:
             worker.kill()
             worker.wait()
+
+
+@pytest.mark.parametrize("link_kind", [None, "symlink", "hardlink"])
+def test_enabled_source_writes_modify_existing_source(command_job, link_kind):
+    """Explicit write permission permits real edits, including ordinary file links."""
+    original, _contents, output, launch = command_job
+    target = original
+    if link_kind:
+        target = output / "source-link.csv"
+        if link_kind == "symlink":
+            target.symlink_to(original)
+        else:
+            os.link(original, target)
+    receipt = launch(
+        f"printf 'x,y\\n3,4\\n' > {shlex.quote(str(target))}", source_writes=True
+    )
+    assert receipt["status"] == "completed", receipt
+    assert original.read_text() == "x,y\n3,4\n"

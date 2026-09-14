@@ -101,8 +101,8 @@ def test_stalled_csv_is_actually_inspected_without_writing(task):
     )
 
 
-def test_engine_shell_writes_only_derived_output(task):
-    """The actual LocalTools payload must enforce protection, not just the worker API."""
+def test_engine_shell_source_writes_follow_task_permission(task):
+    """Exercise enabled source editing and disabled writes through the app payload."""
     import threading
     from locaii.tools import LocalTools
 
@@ -116,9 +116,14 @@ def test_engine_shell_writes_only_derived_output(task):
         threading.Event(),
         lambda *args: None,
     )
-    refused = local.execute("run_command", {"command": "printf bad > metadata.csv"})
-    assert refused["status"] == "failed"
-    assert source.read_text() == "x,y\n1,2\n"
+    edited = local.execute("run_command", {"command": "printf updated > metadata.csv"})
+    assert edited["status"] == "completed", edited
+    assert source.read_text() == "updated"
+    local.options["workspace_writes"] = False
+    refused = local.execute("run_command", {"command": "printf denied > metadata.csv"})
+    assert refused["status"] == "failed", refused
+    assert source.read_text() == "updated"
+    local.options["workspace_writes"] = True
     allowed = local.execute(
         "run_command", {"command": 'cp metadata.csv "$LOCAII_OUTPUT_DIR/derived.csv"'}
     )

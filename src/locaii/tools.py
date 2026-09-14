@@ -237,7 +237,7 @@ class LocalTools:
                 ),
                 schema(
                     "run_command",
-                    "Run a command with read-only inputs and no network. Write derived results to $LOCAII_OUTPUT_DIR and scratch files to $LOCAII_WORK_DIR. After 15s returns a job_id to poll.",
+                    "Run a shell command without network. When workspace writes are enabled, source files are editable with normal OS permissions; otherwise files are read-only. $LOCAII_OUTPUT_DIR and $LOCAII_WORK_DIR are available for outputs and scratch files in write mode. After 15s returns a job_id to poll.",
                     {
                         "command": string(),
                         "cwd": string(),
@@ -247,7 +247,7 @@ class LocalTools:
                 ),
                 schema(
                     "start_command",
-                    "Start a read-only-input shell job, without network. Write only to $LOCAII_OUTPUT_DIR or $LOCAII_WORK_DIR; poll_command observes completion.",
+                    "Start a shell job without network. Workspace writes enables source-file edits with normal OS permissions; otherwise files are read-only. Use poll_command to observe completion.",
                     {
                         "command": string(),
                         "cwd": string(),
@@ -721,8 +721,8 @@ class LocalTools:
     def _command(self, args, wait):
         """Run a standalone worker; poll rather than holding a tool request indefinitely."""
         command = args["command"]
-        # Commands may read their chosen cwd, but the worker mounts inputs
-        # read-only and permits writes only in a fresh task output area.
+        # The worker applies the saved task write permission, including source
+        # edits when enabled. The output area remains a convenient destination.
         requested = args.get("cwd") or str(self.workspace)
         cwd = self.path(requested)
         if not cwd.is_dir():
@@ -757,6 +757,9 @@ class LocalTools:
                 "command": command,
                 "cwd": str(cwd),
                 "write_roots": write_roots,
+                "allow_source_writes": bool(
+                    self.options.get("workspace_writes", False)
+                ),
                 "output_directory": str(output_root / "outputs"),
                 "timeout": min(86400, max(1, int(args.get("timeout", 3600)))),
                 "created": time.time(),

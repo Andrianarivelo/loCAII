@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-09-14T16:23:26.244747</dc:date>
+    <dc:date>2026-09-14T17:07:12.498001</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -56,7 +56,7 @@ z
      <g id="line2d_3">
       <path d="M 38.016 189
 L 196.416 189
-" clip-path="url(#p1e41eb5bae)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pf2adecee84)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_4"/>
      <g id="text_3">
@@ -67,7 +67,7 @@ L 196.416 189
      <g id="line2d_5">
       <path d="M 38.016 99.830769
 L 196.416 99.830769
-" clip-path="url(#p1e41eb5bae)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pf2adecee84)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_6"/>
      <g id="text_4">
@@ -81,10 +81,10 @@ L 196.416 99.830769
    <g id="patch_3">
     <path d="M 45.216 189
 L 78.446769 189
-L 78.446769 189
-L 45.216 189
+L 78.446769 99.830769
+L 45.216 99.830769
 z
-" clip-path="url(#p1e41eb5bae)" style="fill: #9da8b2"/>
+" clip-path="url(#pf2adecee84)" style="fill: #9da8b2"/>
    </g>
    <g id="patch_4">
     <path d="M 155.985231 189
@@ -92,7 +92,7 @@ L 189.216 189
 L 189.216 99.830769
 L 155.985231 99.830769
 z
-" clip-path="url(#p1e41eb5bae)" style="fill: #277568"/>
+" clip-path="url(#pf2adecee84)" style="fill: #277568"/>
    </g>
    <g id="patch_5">
     <path d="M 38.016 189
@@ -105,7 +105,7 @@ L 196.416 189
 " style="fill: none; stroke: #cdd3d6; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="text_6">
-    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #263740" x="61.831385" y="183.204" transform="rotate(-0 61.831385 183.204)">Fail</text>
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #263740" x="61.831385" y="94.034769" transform="rotate(-0 61.831385 94.034769)">Pass</text>
    </g>
    <g id="text_7">
     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #263740" x="172.600615" y="94.034769" transform="rotate(-0 172.600615 94.034769)">Pass</text>
@@ -142,7 +142,7 @@ z
      <g id="line2d_9">
       <path d="M 251.856 189
 L 410.256 189
-" clip-path="url(#pc7f24e6b23)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p30902c2aad)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_10"/>
      <g id="text_11">
@@ -153,7 +153,7 @@ L 410.256 189
      <g id="line2d_11">
       <path d="M 251.856 99.830769
 L 410.256 99.830769
-" clip-path="url(#pc7f24e6b23)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p30902c2aad)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_12"/>
      <g id="text_12">
@@ -167,7 +167,7 @@ L 292.286769 189
 L 292.286769 189
 L 259.056 189
 z
-" clip-path="url(#pc7f24e6b23)" style="fill: #9da8b2"/>
+" clip-path="url(#p30902c2aad)" style="fill: #9da8b2"/>
    </g>
    <g id="patch_9">
     <path d="M 369.825231 189
@@ -175,7 +175,7 @@ L 403.056 189
 L 403.056 99.830769
 L 369.825231 99.830769
 z
-" clip-path="url(#pc7f24e6b23)" style="fill: #277568"/>
+" clip-path="url(#p30902c2aad)" style="fill: #277568"/>
    </g>
    <g id="patch_10">
     <path d="M 251.856 189
@@ -194,7 +194,7 @@ L 410.256 189
     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #263740" x="386.440615" y="94.034769" transform="rotate(-0 386.440615 94.034769)">Pass</text>
    </g>
    <g id="text_15">
-    <text style="font-size: 10.8px; font-family: 'DejaVu Sans'; text-anchor: middle" x="331.056" y="67.08" transform="rotate(-0 331.056 67.08)">Preserve original bytes</text>
+    <text style="font-size: 10.8px; font-family: 'DejaVu Sans'; text-anchor: middle" x="331.056" y="67.08" transform="rotate(-0 331.056 67.08)">Honor write permission</text>
    </g>
   </g>
   <g id="axes_3">
@@ -225,7 +225,7 @@ z
      <g id="line2d_15">
       <path d="M 465.696 189
 L 624.096 189
-" clip-path="url(#p8e0d584e34)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p10e5d54dc3)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_16"/>
      <g id="text_18">
@@ -236,7 +236,7 @@ L 624.096 189
      <g id="line2d_17">
       <path d="M 465.696 99.830769
 L 624.096 99.830769
-" clip-path="url(#p8e0d584e34)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p10e5d54dc3)" style="fill: none; stroke: #e5e9eb; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_18"/>
      <g id="text_19">
@@ -247,10 +247,10 @@ L 624.096 99.830769
    <g id="patch_13">
     <path d="M 472.896 189
 L 506.126769 189
-L 506.126769 189
-L 472.896 189
+L 506.126769 99.830769
+L 472.896 99.830769
 z
-" clip-path="url(#p8e0d584e34)" style="fill: #9da8b2"/>
+" clip-path="url(#p10e5d54dc3)" style="fill: #9da8b2"/>
    </g>
    <g id="patch_14">
     <path d="M 583.665231 189
@@ -258,7 +258,7 @@ L 616.896 189
 L 616.896 99.830769
 L 583.665231 99.830769
 z
-" clip-path="url(#p8e0d584e34)" style="fill: #277568"/>
+" clip-path="url(#p10e5d54dc3)" style="fill: #277568"/>
    </g>
    <g id="patch_15">
     <path d="M 465.696 189
@@ -271,7 +271,7 @@ L 624.096 189
 " style="fill: none; stroke: #cdd3d6; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="text_20">
-    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #263740" x="489.511385" y="183.204" transform="rotate(-0 489.511385 183.204)">Fail</text>
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #263740" x="489.511385" y="94.034769" transform="rotate(-0 489.511385 94.034769)">Pass</text>
    </g>
    <g id="text_21">
     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #263740" x="600.280615" y="94.034769" transform="rotate(-0 600.280615 94.034769)">Pass</text>
@@ -281,23 +281,23 @@ L 624.096 189
    </g>
   </g>
   <g id="text_23">
-   <text style="font-weight: 700; font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: start" x="38.016" y="16.437656" transform="rotate(-0 38.016 16.437656)">Evidence handling and source-file protection</text>
+   <text style="font-weight: 700; font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: start" x="38.016" y="16.437656" transform="rotate(-0 38.016 16.437656)">Evidence handling and source-write permissions</text>
   </g>
   <g id="text_24">
-   <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #596973" x="38.016" y="40.32" transform="rotate(-0 38.016 40.32)">Baseline 5571c2b vs current source | Disposable synthetic files only</text>
+   <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #596973" x="38.016" y="40.32" transform="rotate(-0 38.016 40.32)">Baseline 0e2fc52 vs current source | Disposable synthetic files only</text>
   </g>
   <g id="text_25">
    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #596973" x="38.016" y="231.84" transform="rotate(-0 38.016 231.84)">Three deterministic mechanism checks. No model inference, sampling, significance tests, or intelligence score.</text>
   </g>
  </g>
  <defs>
-  <clipPath id="p1e41eb5bae">
+  <clipPath id="pf2adecee84">
    <rect x="38.016" y="73.08" width="158.4" height="115.92"/>
   </clipPath>
-  <clipPath id="pc7f24e6b23">
+  <clipPath id="p30902c2aad">
    <rect x="251.856" y="73.08" width="158.4" height="115.92"/>
   </clipPath>
-  <clipPath id="p8e0d584e34">
+  <clipPath id="p10e5d54dc3">
    <rect x="465.696" y="73.08" width="158.4" height="115.92"/>
   </clipPath>
  </defs>

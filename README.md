@@ -23,7 +23,7 @@ loCAII runs its own **llama.cpp** model server and talks directly to **ComfyUI**
 3. **Models:** import additional GGUF weights, attach a matching vision projector, and edit model/context settings. Built-in profiles cover the existing Qwen3.5 4B/9B and Qwen3.8 27B abliterated weights. Start with 9B for more demanding tasks. The **CPU-only preset** uses 8K context and no GPU allocation when another application is using the GPU.
 4. **Supervision:** choose local, manual, Codex CLI, Claude CLI, OpenAI API or Anthropic API review. Local iterations do the work; the reviewer supplies plans, checks evidence and requests another iteration when needed. Remote review is off by default.
 
-File tools can read across the computer when enabled. Explicit attachments remain readable even when general reads are restricted to the workspace. Native writes stay within the selected workspace, retain backups and protect existing measurement/metadata files. **Shell commands now require Linux bubblewrap:** source locations are mounted read-only, network access is isolated, and only this task's dedicated `locaii-results/<task-id>/work` and `outputs` directories are writable. Commands use `$LOCAII_WORK_DIR` and `$LOCAII_OUTPUT_DIR`; shell-based source edits and downloads must use the appropriate file/network tools instead. Missing sandbox support refuses the command. Installed Python extensions remain trusted code outside this shell boundary; this prevents the reproduced accidental overwrite, not every possible hostile-code attack.
+File tools can read across the computer when enabled. Explicit attachments remain readable even when general reads are restricted to the workspace. Native writes stay within the selected workspace, retain backups and protect existing measurement/metadata files. **Terminal commands can modify source files when terminal access and file writes are enabled.** Shell writes follow your OS account's filesystem permissions, including paths outside the selected workspace, and do not make automatic backups. Disabling file writes makes terminal source access read-only. The optional `locaii-results/<task-id>/work` and `outputs` directories remain available through `$LOCAII_WORK_DIR` and `$LOCAII_OUTPUT_DIR`. Linux bubblewrap still provides network and process isolation; missing support refuses the command. Installed Python extensions remain trusted code outside this shell boundary.
 
 Text, PDF, DOCX and XLSX attachments have bounded extraction. Images use the model's matching vision projector. Binary formats without an extractor are identified rather than decoded as bogus text. Arbitrary PDF layouts, very large documents and model visual reasoning are not guaranteed to be interpreted correctly.
 
@@ -142,8 +142,8 @@ before it was installed; use verified original acquisition exports or backups.
 
 
 `python scripts/benchmark_evidence_safety.py` compares the prior commit with the
-current implementation on three synthetic regressions: newest evidence, blocked
-source overwrite, and header-only detection. CSV and PNG/PDF/SVG results are in
+current implementation on three synthetic regressions: newest evidence, enabled/disabled
+shell source-write permissions, and header-only detection. CSV and PNG/PDF/SVG results are in
 `docs/benchmarks/evidence-safety.*`; provenance is under `.local/verification`.
 These are mechanism checks, not a model-intelligence score.
 

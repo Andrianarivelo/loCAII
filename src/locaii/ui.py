@@ -795,7 +795,11 @@ class MainWindow(QMainWindow):
             "Terminal commands run with your account permissions. File-tool backups and raw-data protections cannot constrain arbitrary shell commands. Enable only for tasks you trust."
         )
         self.workspace_writes = QCheckBox(
-            "Allow writes inside the selected workspace, with backups"
+            "Allow file writes, including source edits through terminal"
+        )
+        self.workspace_writes.setToolTip(
+            "File tools edit the workspace with backups. Enabled terminal commands can "
+            "modify source files with your OS account permissions, without automatic backups."
         )
         self.workspace_writes.setChecked(True)
         self.read_all_files = QCheckBox(
