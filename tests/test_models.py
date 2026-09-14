@@ -156,8 +156,8 @@ def test_stop_terminates_only_owned_process(manager):
     ready(manager)
     owned = manager._process
     manager.stop()
-    owned.terminate.assert_called_once()
-    owned.wait.assert_called_once_with(timeout=10)
+    owned.kill.assert_called_once()
+    owned.wait.assert_called_once_with(timeout=5)
     assert not manager.status()["running"]
 
 
@@ -332,3 +332,138 @@ def test_zero_gpu_layers_explicitly_disables_device_offload(manager, monkeypatch
     profile["gpu_layers"] = 0
     command = manager._command(profile)
     assert command[command.index("--device") + 1] == "none"
+
+
+def test_interrupt_unblocks_token_count_without_waiting_for_operation_lock(manager):
+    """Stop interrupts prefill/template HTTP even outside chat's cancel watcher."""
+    import requests
+
+    ready(manager)
+    owned = manager._process
+    entered, killed = threading.Event(), threading.Event()
+    owned.kill.side_effect = killed.set
+    errors = []
+
+    def blocked_request(*args, **kwargs):
+        entered.set()
+        assert killed.wait(2), "Stop failed to signal the owned backend"
+        raise requests.ConnectionError("Owned server stopped")
+
+    def count():
+        try:
+            manager.count_tokens([])
+        except Exception as error:
+            errors.append(error)
+
+    manager._session.post = blocked_request
+    worker = threading.Thread(target=count)
+    worker.start()
+    assert entered.wait(2)
+    manager.interrupt()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], ModelCancelled)
+    manager.stop()
+    assert manager.status()["state"] == "stopped"
+    assert manager._model is None
+
+
+def test_stop_during_device_discovery_cannot_spawn_late_server(
+    manager, monkeypatch, tmp_path
+):
+    """A cancelled startup cannot allocate VRAM after Stop returned to the UI."""
+    model = tmp_path / "fixture.gguf"
+    model.write_bytes(b"GGUF")
+    profile = manager.register(model, "Fixture", gpu_layers=0)
+    entered, release = threading.Event(), threading.Event()
+    errors = []
+
+    def command(_):
+        entered.set()
+        assert release.wait(2)
+        return ["/unused"]
+
+    def start():
+        try:
+            manager.start(profile["id"])
+        except Exception as error:
+            errors.append(error)
+
+    monkeypatch.setattr(manager, "_command", command)
+    spawn = Mock(side_effect=AssertionError("Cancelled startup spawned a server"))
+    monkeypatch.setattr("locaii.models.subprocess.Popen", spawn)
+    worker = threading.Thread(target=start)
+    worker.start()
+    assert entered.wait(2)
+    manager.interrupt()
+    release.set()
+    worker.join(timeout=3)
+    assert not worker.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], ModelCancelled)
+    spawn.assert_not_called()
+    assert manager.status()["state"] == "stopped"
+    assert manager._log is None
+
+
+@pytest.mark.parametrize("phase", ["ready", "error", "stopped"])
+def test_stop_reaps_real_owned_idle_child_and_clears_error(manager, phase):
+    """Only a fresh test-owned child is killed; no model weights or GPU are used."""
+    import subprocess
+    import sys
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    manager._process = child
+    manager._model = manager.list_models()[0]
+    manager._phase, manager._error = phase, "previous error"
+    try:
+        manager.stop()
+        assert child.poll() is not None
+        assert manager.status()["state"] == "stopped"
+        assert manager.status()["error"] == ""
+        assert manager._process is None
+        manager.stop()  # Repeated clicks after release remain harmless.
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=2)
+
+
+def test_interrupt_during_health_cannot_publish_ready(manager, monkeypatch, tmp_path):
+    """A late successful health response must not undo the stopped state."""
+    model = tmp_path / "fixture.gguf"
+    model.write_bytes(b"GGUF")
+    profile = manager.register(model, "Fixture", gpu_layers=0)
+    child = Mock(pid=654)
+    child.poll.return_value = None
+    monkeypatch.setattr(manager, "_command", lambda _: ["/unused"])
+    monkeypatch.setattr("locaii.models.subprocess.Popen", Mock(return_value=child))
+
+    def health(*args, **kwargs):
+        manager.interrupt()
+        return Mock(status_code=200)
+
+    manager._session.get = health
+    with pytest.raises(ModelCancelled):
+        manager.start(profile["id"])
+    assert manager.status()["state"] == "stopped"
+    assert manager._process is None
+    child.wait.assert_called()
+
+
+def test_direct_interrupt_of_chat_reaps_backend_without_cancel_event(manager):
+    """The explicit unload API works even when no prediction event was supplied."""
+    import requests
+
+    ready(manager)
+    owned = manager._process
+
+    def interrupted_post(*args, **kwargs):
+        manager.interrupt()
+        raise requests.ConnectionError("Stopped")
+
+    manager._session.post = interrupted_post
+    with pytest.raises(ModelCancelled):
+        manager.chat([])
+    owned.wait.assert_called_once_with(timeout=5)
+    assert manager._process is None
+    assert manager.status()["state"] == "stopped"

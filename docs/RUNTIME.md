@@ -119,3 +119,18 @@ python scripts/check_vision.py --gpu --model qwen35-9b-abliterated --threads 6
 On 2026-09-11 the 9B abliterated model passed the same synthetic file workflow with full NVIDIA Vulkan offload, six threads, 32K context, q8 KV cache and the CPU vision projector. Workflow including memory took 38.63 seconds; read-only continuation took 11.54 seconds. A fresh-process resume after the memory evidence fix took 25.89 seconds including load and a subsequent inference request. The earlier CPU trial used four threads and 8K context and took 255.40 seconds for the workflow, so these single-run timings include different context, caching and memory-summary behavior. They are not a controlled throughput benchmark.
 
 GPU vision also passed the synthetic two-shape check in 8.33 seconds. The owned server allocated 5,446 MiB for that run. No LM Studio inference server was used. Optional summaries remain fallible; exact copied evidence and the archived transcript are retained separately.
+
+## Stop and model release verification, 2026-09-14
+
+The chat Stop action now unloads the owned model even after a task error or
+completion. A separate lifecycle interrupt bypasses blocked prediction and token
+counting; process cleanup runs outside the Qt thread. New work waits for cleanup.
+A concurrent Stop invalidates pending startup before it can allocate another model.
+
+`python scripts/check_stop_release.py` tested a private Qwen3.5 9B GPU worker:
+GPU usage was 27 MiB before loading, 5,489 MiB loaded, and 27 MiB after Stop.
+Cancellation and worker exit took 0.142 seconds in this single run. Both the
+inference thread and owned process exited; the outcome was `ModelCancelled`.
+This is an observed functional check, not a latency guarantee or population estimate.
+Other GPU applications were not stopped. The report is private under
+`.local/verification/stop-release/10e96f7f441f4de7a9d51a9074e4f6de/report.json`.

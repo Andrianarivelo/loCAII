@@ -1,8 +1,8 @@
 """Owned llama.cpp process, editable model registry, and streamed native tool calls.
 
-All prediction and lifecycle operations serialize through one reentrant lock.
-Cancellation closes the HTTP request; only the child process created here can be
-terminated. Other model servers, including LM Studio, are never stopped here.
+Prediction and cleanup serialize through one reentrant lock. Stop signals the
+owned child through a separate lifecycle lock so blocked HTTP cannot delay it.
+Other model servers, including LM Studio, are never stopped here.
 """
 
 from __future__ import annotations
@@ -180,6 +180,9 @@ class ModelManager:
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        # Lifecycle interruption must never wait for an in-flight HTTP request.
+        self._lifecycle_lock = threading.Lock()
+        self._stop_generation = 0
         self._process: subprocess.Popen | None = None
         self._log = None
         self._model: dict | None = None
@@ -456,8 +459,11 @@ class ModelManager:
 
     def start(self, model_id: str, cancel=None, emit=None) -> dict:
         """Load lazily and wait for health, reporting failure with the backend log tail."""
+        generation = self._stop_generation
         with self._lock:
             _check_cancel(cancel)
+            if generation != self._stop_generation:
+                raise ModelCancelled("Model loading was stopped.")
             profile = next((p for p in self.list_models() if p["id"] == model_id), None)
             if (
                 self._model == profile
@@ -470,8 +476,9 @@ class ModelManager:
                 raise ModelError(f"Unknown model profile: {model_id}")
             if not Path(profile["path"]).is_file():
                 raise ModelError(f'Model weights are missing: {profile["path"]}')
-            command = self._command(profile)
             self.stop()
+            generation += 1
+            command = self._command(profile)
             try:
                 self._check_gpu_memory(profile)
             except ModelError as error:
@@ -512,16 +519,24 @@ class ModelManager:
                     if sys.platform.startswith("linux")
                     else command
                 )
-                self._process = subprocess.Popen(
-                    guarded,
-                    stdout=self._log,
-                    stderr=subprocess.STDOUT,
-                    env=env,
-                    start_new_session=True,
-                )
+                # Couple the final cancellation check and process publication.
+                # Stop cannot miss a process spawned during device discovery.
+                with self._lifecycle_lock:
+                    _check_cancel(cancel)
+                    if generation != self._stop_generation:
+                        raise ModelCancelled("Model loading was stopped.")
+                    self._process = subprocess.Popen(
+                        guarded,
+                        stdout=self._log,
+                        stderr=subprocess.STDOUT,
+                        env=env,
+                        start_new_session=True,
+                    )
                 deadline = time.monotonic() + 360
                 while time.monotonic() < deadline:
                     _check_cancel(cancel)
+                    if generation != self._stop_generation:
+                        raise ModelCancelled("Model loading was stopped.")
                     if self._process.poll() is not None:
                         raise ModelError(
                             "Model failed to load. Reduce GPU layers/context or close another GPU application.\n"
@@ -532,6 +547,9 @@ class ModelManager:
                             self.base_url + "/health", timeout=2
                         )
                         if response.status_code == 200:
+                            _check_cancel(cancel)
+                            if generation != self._stop_generation:
+                                raise ModelCancelled("Model loading was stopped.")
                             self._phase = "ready"
                             if emit:
                                 emit("model_status", self.status())
@@ -544,7 +562,11 @@ class ModelManager:
                 )
             except Exception as exc:
                 self.stop()
-                self._phase, self._error = "error", str(exc)
+                self._phase, self._error = (
+                    ("stopped", "")
+                    if isinstance(exc, ModelCancelled)
+                    else ("error", str(exc))
+                )
                 raise
 
     def _log_tail(self) -> str:
@@ -555,22 +577,39 @@ class ModelManager:
             source.seek(max(0, path.stat().st_size - 5000))
             return source.read().decode(errors="replace")
 
-    def stop(self) -> None:
-        """Release only this manager's process, with a bounded shutdown wait."""
-        with self._lock:
-            if self._process and self._process.poll() is None:
-                self._process.terminate()
+    def interrupt(self) -> None:
+        """Immediately signal only our owned server, without awaiting HTTP or exit.
+
+        Call from Stop before scheduling ``stop`` on a background worker. Killing
+        the disposable inference process breaks stalled prefill, token-counting,
+        and streaming sockets. Persistent task state is outside this process.
+        """
+        with self._lifecycle_lock:
+            self._stop_generation += 1
+            self._phase = "stopping"
+            process = self._process
+            if process and process.poll() is None:
                 try:
-                    self._process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self._process.kill()
-                    self._process.wait(timeout=5)
+                    process.kill()
+                except ProcessLookupError:
+                    pass  # The owned child exited between poll and the signal.
+
+    def stop(self) -> None:
+        """Interrupt promptly, then reap and release this manager's resources.
+
+        Cleanup can wait for the current operation lock, so UI callers run it in
+        a worker. ``interrupt`` itself never waits on inference or process exit.
+        """
+        self.interrupt()
+        with self._lock:
+            if self._process:
+                self._process.wait(timeout=5)
             self._process = None
             if self._log:
                 self._log.close()
                 self._log = None
             self._model = None
-            self._phase = "stopped"
+            self._phase, self._error = "stopped", ""
 
     def status(self) -> dict:
         # Do not wait on inference's lock: UI status remains readable during generation.
@@ -597,6 +636,7 @@ class ModelManager:
             _check_cancel(cancel)
             if not self.status()["running"]:
                 raise ModelError("Choose and load a model before sending a message.")
+            generation = self._stop_generation
             body = {
                 "model": self._model["id"],
                 "messages": messages,
@@ -625,7 +665,10 @@ class ModelManager:
                         interrupt_sent.set()
                         self._phase = "stopping"
                         if owned_process and owned_process.poll() is None:
-                            owned_process.kill()
+                            try:
+                                owned_process.kill()
+                            except ProcessLookupError:
+                                pass
 
             def watch_cancel():
                 # Closing an idle HTTP stream can block; terminating our own server
@@ -651,6 +694,8 @@ class ModelManager:
                     content, reasoning, calls, usage, finish = [], [], {}, {}, None
                     for line in response.iter_lines(chunk_size=1):
                         _check_cancel(cancel)
+                        if generation != self._stop_generation:
+                            raise ModelCancelled("Model operation was stopped.")
                         if not line or not line.startswith(b"data: "):
                             continue
                         payload = line[6:]
@@ -686,6 +731,8 @@ class ModelManager:
                                     if function.get(key):
                                         target["function"][key] += function[key]
                     _check_cancel(cancel)
+                    if generation != self._stop_generation:
+                        raise ModelCancelled("Model operation was stopped.")
                     if finish is None:
                         raise ModelError(
                             "Inference stream ended before a completion marker. Retry the saved task."
@@ -701,12 +748,14 @@ class ModelManager:
                     }
             except requests.RequestException as exc:
                 _check_cancel(cancel)
+                if generation != self._stop_generation:
+                    raise ModelCancelled("Model operation was stopped.") from None
                 raise ModelError(
                     f"Local inference connection failed: {exc}. Task progress is retained."
                 ) from exc
             finally:
                 finished.set()
-                if _cancelled(cancel):
+                if _cancelled(cancel) or generation != self._stop_generation:
                     interrupt_owned()
                     if owned_process:
                         owned_process.wait(timeout=5)
@@ -723,6 +772,7 @@ class ModelManager:
         with self._lock:
             if not self.status()["running"]:
                 raise ModelError("Token counting requires a loaded model.")
+            generation = self._stop_generation
             body = {
                 "messages": messages,
                 "add_generation_prompt": True,
@@ -737,6 +787,8 @@ class ModelManager:
                 rendered = self._session.post(
                     self.base_url + stage, json=body, timeout=30
                 )
+                if generation != self._stop_generation:
+                    raise ModelCancelled("Token counting was stopped.")
                 rendered.raise_for_status()
                 prompt = rendered.json()["prompt"]
                 if not isinstance(prompt, str):
@@ -749,6 +801,8 @@ class ModelManager:
                     json={"content": prompt, "add_special": True},
                     timeout=30,
                 )
+                if generation != self._stop_generation:
+                    raise ModelCancelled("Token counting was stopped.")
                 tokens.raise_for_status()
                 token_ids = tokens.json()["tokens"]
                 if not isinstance(token_ids, list):
@@ -766,6 +820,8 @@ class ModelManager:
                 )
                 return len(token_ids) + images * 2048
             except requests.HTTPError as exc:
+                if generation != self._stop_generation:
+                    raise ModelCancelled("Token counting was stopped.") from None
                 response = exc.response
                 detail = (
                     _response_error_detail(response)
@@ -784,6 +840,8 @@ class ModelManager:
                     + " Saved task history is retained; no approximate token count was used."
                 ) from None
             except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
+                if generation != self._stop_generation:
+                    raise ModelCancelled("Token counting was stopped.") from None
                 raise ModelError(
                     f"Could not measure the actual model context at {stage}: {_backend_error_detail(str(exc))} "
                     "Saved task history is retained; no approximate token count was used."

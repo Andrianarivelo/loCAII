@@ -1,0 +1,5 @@
+version,scenario,completed,inference_rounds,status
+before,progress,0,40,Iteration limit reached. Progress is saved. Increase the limit or send Continue.
+before,repetition,0,40,Iteration limit reached. Progress is saved. Increase the limit or send Continue.
+after,progress,1,46,completed
+after,repetition,1,5,completed

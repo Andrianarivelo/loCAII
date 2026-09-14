@@ -239,6 +239,9 @@ class MainWindow(QMainWindow):
         self.workspace = str(Path.home())
         self.attachments: list[str] = []
         self.worker: Worker | None = None
+        self._stop_worker: Worker | None = None
+        self._stop_requested = False
+        self._stop_error = ""
         self._active_chat_session_id: str | None = None
         self._active_chat_options: dict | None = None
         self._active_chat_succeeded = False
@@ -420,7 +423,7 @@ class MainWindow(QMainWindow):
         controls.addStretch()
         self.stop_button = button("Stop", self.stop)
         self.stop_button.setObjectName("danger")
-        self.stop_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
         controls.addWidget(self.stop_button)
         self.send_button = button("Send  ↑", self.send, True)
         controls.addWidget(self.send_button)
@@ -768,8 +771,13 @@ class MainWindow(QMainWindow):
         self.supervisor_every.setRange(1, 100)
         self.supervisor_every.setValue(6)
         self.max_iterations = QSpinBox()
-        self.max_iterations.setRange(1, 500)
-        self.max_iterations.setValue(60)
+        self.max_iterations.setRange(0, 1000000)
+        self.max_iterations.setSpecialValueText("Unlimited")
+        self.max_iterations.setValue(0)
+        self.max_iterations.setToolTip(
+            "No iteration cutoff by default. Stop remains available. "
+            "Set a positive value only for an explicitly bounded run."
+        )
         self.token_budget = QSpinBox()
         self.token_budget.setRange(256, 1000000)
         self.token_budget.setSingleStep(1000)
@@ -804,7 +812,7 @@ class MainWindow(QMainWindow):
             ("Supervisor model", self.supervisor_model),
             ("When to review", self.supervisor_scope),
             ("Review every N steps", self.supervisor_every),
-            ("Maximum local iterations", self.max_iterations),
+            ("Optional iteration limit", self.max_iterations),
             ("Supervisor token allowance", self.token_budget),
             ("External access", self.remote_enabled),
             ("Terminal", self.allow_terminal),
@@ -966,7 +974,7 @@ class MainWindow(QMainWindow):
     def poll_delegation(self) -> None:
         """Drain one local job only when chat, inference, and rendering are idle."""
         hub = self._delegation_hub
-        if hub is None or self._pending_close:
+        if hub is None or self._pending_close or self._stop_requested:
             return
         identity = None
         try:
@@ -1354,6 +1362,8 @@ class MainWindow(QMainWindow):
         }
 
     def send(self) -> None:
+        if self._stop_requested:
+            return
         if self.worker:
             self.queue_live_update()
             return
@@ -1417,7 +1427,9 @@ class MainWindow(QMainWindow):
             and self._active_chat_session_id == self.session_id
         )
         self.send_button.setText("Send update" if can_update else "Send  ↑")
-        self.send_button.setEnabled(not self.worker or can_update)
+        self.send_button.setEnabled(
+            not self._stop_requested and (not self.worker or can_update)
+        )
 
     def refresh_pending_steering(self, show_messages: bool = False) -> list:
         """Keep durable, unapplied updates visible after interruption or selection."""
@@ -1487,7 +1499,7 @@ class MainWindow(QMainWindow):
 
     def resume(self) -> None:
         """Continue the selected task without overwriting an unsent composer draft."""
-        if self.session_id and not self.worker:
+        if self.session_id and not self.worker and not self._stop_requested:
             session_id, options = self.session_id, self.options()
             if not options.get("model_id"):
                 self.show_error("Import or select a GGUF model in Models first.")
@@ -1522,6 +1534,7 @@ class MainWindow(QMainWindow):
         if (
             self.worker
             or self._pending_close
+            or self._stop_requested
             or self.session_id != session_id
             or generation != self._steering_restart_generation
             or not self.store.pending_steering(session_id)
@@ -1547,7 +1560,7 @@ class MainWindow(QMainWindow):
         options: dict | None = None,
     ) -> None:
         """Serialize jobs and explicitly distinguish steerable chats from other work."""
-        if self.worker:
+        if self.worker or self._stop_requested:
             self.show_error(
                 "Another operation is still running. Stop it before starting this one."
             )
@@ -1579,13 +1592,77 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def stop(self) -> None:
+        """Interrupt immediately, then reap owned model processes outside the UI thread."""
         self._steering_restart_generation += 1
+        if self._stop_requested:
+            return
+        self._stop_requested = True
+        self._stop_error = ""
         if self.worker:
             self.worker.cancel.set()
-            self.run_status.setText("◌ Stopping…")
-            self.statusBar().showMessage(
-                "Stop requested. Waiting for the current operation to checkpoint and release resources."
-            )
+        # This API only signals owned processes. Waiting and resource cleanup run
+        # on a separate QThread, including when the chat has already finished.
+        interrupt = getattr(self.models, "interrupt", None)
+        if interrupt:
+            try:
+                interrupt()
+            except Exception as exc:
+                self._stop_error = str(exc)
+        self._set_work_controls(False)
+        self.run_status.setText("◌ Stopping…")
+        self.statusBar().showMessage(
+            "Stopping generation and unloading the local model…"
+        )
+        self._stop_worker = Worker(lambda cancel, emit: self.models.stop(), self)
+        self._stop_worker.failed.connect(self._stop_failed)
+        self._stop_worker.finished.connect(self._stop_cleanup_finished)
+        self._stop_worker.start()
+
+    def _stop_failed(self, message: str) -> None:
+        """Preserve cleanup failure so the UI never claims GPU release on failure."""
+        self._stop_error = message
+
+    def _stop_cleanup_finished(self) -> None:
+        """Keep the window alive until both cleanup and the task have exited."""
+        old = self._stop_worker
+        self._stop_worker = None
+        if old:
+            old.deleteLater()
+        self._finish_stop_if_idle()
+
+    def _finish_stop_if_idle(self) -> None:
+        """Re-enable actions only after cancellation and unload have both completed."""
+        if not self._stop_requested or self.worker or self._stop_worker:
+            return
+        self._stop_requested = False
+        self._set_work_controls(True)
+        if self._stop_error:
+            self.show_error("Could not finish unloading the model: " + self._stop_error)
+        else:
+            self.error_seen = False
+            self.error_label.hide()
+            self.run_status.setText("◌ Stopped")
+            message = "Stopped. App-owned local model unloaded."
+            self.statusBar().showMessage(message)
+            self.model_status.setText(message)
+        if self._pending_close:
+            self.close()
+
+    def _set_work_controls(self, enabled: bool) -> None:
+        """Serialize new work with asynchronous model cleanup."""
+        self.update_send_mode()
+        for control in (
+            self.continue_button,
+            self.generate_button,
+            self.workspace_button,
+            self.load_model_button,
+            self.unload_model_button,
+            self.cpu_preset_button,
+            self.task_list,
+            self.stop_button,
+        ):
+            control.setEnabled(enabled)
+        self.media_stop.setEnabled(bool(self.worker) and not self._stop_requested)
 
     def work_finished(self) -> None:
         old = self.worker
@@ -1603,16 +1680,7 @@ class MainWindow(QMainWindow):
         self._delegation_session_id = None
         if old:
             old.deleteLater()
-        self.update_send_mode()
-        self.continue_button.setEnabled(True)
-        self.generate_button.setEnabled(True)
-        self.workspace_button.setEnabled(True)
-        self.load_model_button.setEnabled(True)
-        self.unload_model_button.setEnabled(True)
-        self.cpu_preset_button.setEnabled(True)
-        self.task_list.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        self.media_stop.setEnabled(False)
+        self._set_work_controls(not self._stop_requested)
         self.run_status.setText(
             "! Needs attention"
             if self.error_seen
@@ -1620,7 +1688,10 @@ class MainWindow(QMainWindow):
         )
         self.reload_sessions()
         pending = self.refresh_pending_steering()
-        if self._pending_close:
+        if self._stop_requested:
+            self.run_status.setText("◌ Stopping…")
+            self._finish_stop_if_idle()
+        elif self._pending_close:
             self.close()
         elif successful and session_id and not delegated and pending:
             QTimer.singleShot(
@@ -1677,7 +1748,7 @@ class MainWindow(QMainWindow):
             else:
                 self.stream_message.set_content(self.stream_message.content + text)
             self.scroll_bottom()
-        elif event in {"status", "progress", "model_status"}:
+        elif event in {"status", "progress", "model_status", "recovery"}:
             text = str(
                 payload.get("text")
                 or payload.get("message")
@@ -2358,11 +2429,14 @@ class MainWindow(QMainWindow):
                     widget.setChecked(bool(data[key]))
             for key, widget in [
                 ("supervisor_every", self.supervisor_every),
-                ("max_iterations", self.max_iterations),
                 ("supervisor_token_budget", self.token_budget),
             ]:
                 if key in data:
                     widget.setValue(int(data[key]))
+            # Migrate the former mandatory default to unlimited. Positive limits
+            # saved by this version are deliberate and remain respected.
+            if data.get("iteration_limit_schema") == 1:
+                self.max_iterations.setValue(int(data.get("max_iterations", 0)))
             self.supervisor_model.setText(data.get("supervisor_model", ""))
             for key, widget in [
                 ("supervisor_provider", self.supervisor_provider),
@@ -2400,6 +2474,7 @@ class MainWindow(QMainWindow):
                 json.dumps(
                     {
                         **self.options(),
+                        "iteration_limit_schema": 1,
                         "workspace": self.workspace,
                         "supervisor_cli": self.supervisor_cli.currentData(),
                     },
@@ -2457,7 +2532,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         """Do not destroy a running QThread; request a cooperative stop before exit."""
         self._steering_restart_generation += 1
-        if self.worker:
+        if self.worker or self._stop_worker or self._stop_requested:
             self._pending_close = True
             self.stop()
             self.statusBar().showMessage("Finishing the stop request before closing…")

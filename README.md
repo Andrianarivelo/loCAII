@@ -29,6 +29,9 @@ Text, PDF, DOCX and XLSX attachments have bounded extraction. Images use the mod
 
 ## Long-task reliability
 
+- Tasks have no iteration cutoff by default. The optional limit uses 0 (Unlimited); old mandatory GUI limits migrate to Unlimited, while newly saved explicit caps remain supported.
+- Repeated unchanged reads trigger guidance naming the request and the next available page offset. The assistant is instructed to explain findings, uncertainty and its next step. If two recovery attempts are ignored, the app reports a specific no-progress failure with saved evidence instead of claiming completion or looping forever.
+- Stop cancels current work and unloads the app-owned model, including after an error or an idle task. Model shutdown runs outside the UI thread, and new work waits for cleanup. Other applications' model processes are unaffected.
 - Complete transcripts and tool receipts are persisted in SQLite.
 - Automatic Markdown memory records objectives, observations, files and next steps. Model-written summaries are fallible; incomplete summaries do not erase existing notes.
 - Context compaction creates a complete private archive before adopting a measured smaller prompt. Real user instructions remain in the active context; archived messages are retrievable in bounded pages.
@@ -95,3 +98,19 @@ The source repository is private at [Andrianarivelo/loCAII](https://github.com/A
 ## Recovering incomplete tool requests
 
 If a generated tool request is cut off, loCAII rejects it without execution and asks for smaller operations. Its exact text stays in task history, while model-facing context uses a valid, clearly marked historical placeholder. This also allows **Continue** to reopen older tasks that previously failed with `/apply-template` HTTP 500. Actual token counting and context compaction still run; malformed context is not bypassed with an estimated count. Activity diagnostics wrap within the pane and preserve the full readable error.
+
+### Iteration and Stop regression checks
+
+`python scripts/benchmark_iteration_recovery.py --baseline 62648d6` compares the
+actual engine using scripted inference and synthetic files. The old default
+stops a 45-read task at round 40; the new default completes in 46 rounds. A model
+script that obeys explicit pagination recovery finishes the repeated-page case
+in 5 rounds, where the baseline reaches its cap. These are deterministic behavior
+checks, not statistical estimates of real model quality or speed. CSV and
+PNG/PDF/SVG figures are written under `.local/verification/iteration-recovery`.
+
+`python scripts/check_stop_release.py` loads its own 9B GPU worker on a separate
+port, cancels a synthetic generation, and records child exit, cancellation latency
+and GPU memory before/load/after. Run only with sufficient idle GPU capacity.
+It does not unload another application's model. All fixtures and reports remain
+private under `.local/verification/stop-release`.
