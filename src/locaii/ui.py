@@ -16,7 +16,17 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QIcon,
+    QPixmap,
+    QTextBlockFormat,
+    QTextCharFormat,
+    QTextCursor,
+    QTextOption,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -427,6 +437,9 @@ class MainWindow(QMainWindow):
         self.inspect_tabs.setMinimumWidth(270)
         self.activity = QTextBrowser()
         self.activity.setObjectName("details")
+        self.activity.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.activity.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+        self.activity.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.activity.document().setMaximumBlockCount(3000)
         self.activity.setPlaceholderText(
             "Tool calls, progress, and verification appear here."
@@ -1702,9 +1715,7 @@ class MainWindow(QMainWindow):
                     rendered[:9000]
                     + "\n[Display excerpt. Full receipt remains in task history.]"
                 )
-            self.activity.append(
-                f"<p><b>{html.escape(name)}</b> · {html.escape(state)}</p><pre>{html.escape(rendered)}</pre>"
-            )
+            self.append_activity(f"{name} · {state}", rendered)
             self.stream_message = None
         elif event == "steering_applied":
             for identity in payload.get("ids", []):
@@ -1732,9 +1743,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(text)
         elif event in {"review", "usage", "plan", "supervisor_usage"}:
             detail = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
-            self.activity.append(
-                f"<b>{event.title()}</b><pre>{html.escape(detail)}</pre>"
-            )
+            self.append_activity(event.replace("_", " ").title(), detail)
             if event in {"review", "supervisor_usage"}:
                 self.review_view.append(
                     f"<b>{event.replace('_', ' ').title()}</b><pre>{html.escape(detail)}</pre>"
@@ -1773,23 +1782,60 @@ class MainWindow(QMainWindow):
                     )
                 )
         else:
-            self.activity.append(
-                f"<b>{html.escape(event)}</b><pre>{html.escape(json.dumps(payload, default=str))}</pre>"
-            )
+            self.append_activity(str(event), json.dumps(payload, indent=2, default=str))
+
+    def append_activity(self, title: str, detail: str, *, error: bool = False) -> None:
+        """Insert literal diagnostics with soft wrapping and preserve the reading position.
+
+        Rich-text preformatted blocks prevent wrapping in Qt. Plain cursor insertion
+        preserves JSON indentation and newlines while allowing even long paths or
+        tokens to wrap within a narrow inspector. This is display-only; complete
+        execution receipts remain in the task store.
+        """
+        scrollbar = self.activity.verticalScrollBar()
+        position = scrollbar.value()
+        follow = position >= scrollbar.maximum() - 2
+        cursor = QTextCursor(self.activity.document())
+        cursor.movePosition(QTextCursor.End)
+        block = QTextBlockFormat()
+        block.setNonBreakableLines(False)
+        block.setTopMargin(7)
+        block.setBottomMargin(4)
+        if not self.activity.document().isEmpty():
+            cursor.insertBlock(block)
+        else:
+            cursor.setBlockFormat(block)
+        heading = QTextCharFormat()
+        heading.setFontWeight(QFont.Bold)
+        heading.setForeground(QColor("#a34530" if error else "#294b3b"))
+        cursor.insertText(str(title), heading)
+        block.setTopMargin(0)
+        cursor.insertBlock(block)
+        body = QTextCharFormat()
+        body.setForeground(QColor("#27332e"))
+        cursor.insertText(str(detail), body)
+        scrollbar.setValue(scrollbar.maximum() if follow else position)
 
     def show_error(self, text: str) -> None:
+        """Show a compact alert and keep complete, wrapped diagnostics in Activity."""
+        text = str(text)
+        first_line = next(
+            (line.strip() for line in text.splitlines() if line.strip()), ""
+        )
+        summary = " ".join(first_line.split())
+        if len(summary) > 220:
+            summary = summary[:220].rstrip() + "… Full details in Activity."
+        elif text.strip() != first_line:
+            summary += " Full details in Activity."
         self.error_seen = True
-        self.error_label.setText(text)
+        self.error_label.setTextFormat(Qt.PlainText)
+        self.error_label.setText(summary)
         self.error_label.show()
         self.run_status.setText("! Needs attention")
-        self.model_status.setText(text)
-        self.media_status.setText(text)
-        self.statusBar().showMessage(text)
-        self.activity.append(
-            "<p style='color:#a34530'><b>Needs attention</b><br>"
-            + html.escape(text)
-            + "</p>"
-        )
+        self.model_status.setText(summary)
+        self.media_status.setText(summary)
+        self.statusBar().showMessage(summary)
+        self.append_activity("Needs attention", text, error=True)
 
     def reload_models(self) -> None:
         if self.worker:

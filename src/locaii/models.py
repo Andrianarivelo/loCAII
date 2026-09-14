@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import secrets
 import shutil
@@ -28,6 +29,93 @@ MODEL_ROOT = Path("/run/media/andry/andryData/LLM_Models")
 
 class ModelError(RuntimeError):
     """An actionable local runtime or inference error."""
+
+
+def _backend_error_detail(value) -> str:
+    """Expose the cause of a local backend failure without echoing prompt data.
+
+    llama.cpp can include a complete, malformed tool argument in its exception.
+    For JSON parsing errors, retain only the exception code, numeric location,
+    and a recognized parser diagnosis. Other errors receive a short sanitized
+    summary with quoted strings, serialized payloads and credentials removed.
+    """
+    if isinstance(value, dict):
+        value = value.get("error", value)
+        if isinstance(value, dict):
+            value = (
+                value.get("message")
+                or value.get("detail")
+                or value.get("type")
+                or "Backend rejected the request."
+            )
+    if not isinstance(value, str):
+        return "Backend rejected the request without a readable error detail."
+    text = " ".join(value[:16000].split())
+    lower = text.lower()
+    if any(
+        marker in lower
+        for marker in (
+            "parse_error",
+            "parse error",
+            "invalid json",
+            "malformed json",
+            "failed to parse",
+            "json decode",
+        )
+    ):
+        parts = []
+        code = re.search(r"json\.exception\.[a-z_]+\.\d+", text, re.I)
+        location = re.search(r"line\s+\d+[, :] *column\s+\d+", text, re.I)
+        if code:
+            parts.append(code.group(0))
+        if location:
+            parts.append(location.group(0))
+        for diagnostic in (
+            "unexpected end of input",
+            "unterminated string",
+            "invalid string",
+            "unexpected token",
+            "syntax error",
+        ):
+            if diagnostic in lower:
+                parts.append(diagnostic)
+                break
+        suffix = " (" + "; ".join(parts) + ")" if parts else ""
+        return (
+            "Malformed JSON in the backend request or tool-call arguments"
+            + suffix
+            + "."
+        )
+    # Omit quoted data and everything following an embedded object/list; error
+    # prose before those payloads remains available for memory/context failures.
+    text = re.sub(
+        r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', "[quoted content omitted]", text
+    )
+    text = re.split(r"[\{\[]", text, maxsplit=1)[0]
+    text = re.sub(
+        r"(?i)\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{15,})\b",
+        "[REDACTED]",
+        text,
+    )
+    text = re.sub(
+        r"(?i)((?:api[_ -]?key|authorization|password|access[_ -]?token)\s*[=:]\s*)[^\s,;]+",
+        r"\1[REDACTED]",
+        text,
+    )
+    return (
+        text.strip()[:360] or "Backend rejected the request; detailed payload omitted."
+    )
+
+
+def _response_error_detail(response) -> str:
+    """Prefer structured backend errors, falling back to bounded plain text."""
+    try:
+        value = response.json()
+    except (ValueError, TypeError):
+        value = None
+    if not isinstance(value, (dict, str)):
+        value = response.text
+    return _backend_error_detail(value)
 
 
 class ModelCancelled(ModelError):
@@ -558,7 +646,7 @@ class ModelManager:
                 ) as response:
                     if not response.ok:
                         raise ModelError(
-                            f"Inference HTTP {response.status_code}: {response.text[:2000]}"
+                            f"Inference HTTP {response.status_code}: {_response_error_detail(response)}"
                         )
                     content, reasoning, calls, usage, finish = [], [], {}, {}, None
                     for line in response.iter_lines(chunk_size=1):
@@ -570,7 +658,7 @@ class ModelManager:
                             break
                         part = json.loads(payload)
                         if part.get("error"):
-                            raise ModelError(str(part["error"]))
+                            raise ModelError(_backend_error_detail(part["error"]))
                         usage = part.get("usage") or usage
                         for choice in part.get("choices", []):
                             finish = choice.get("finish_reason") or finish
@@ -644,18 +732,29 @@ class ModelManager:
             }
             if tools:
                 body["tools"] = tools
+            stage = "/apply-template"
             try:
                 rendered = self._session.post(
-                    self.base_url + "/apply-template", json=body, timeout=30
+                    self.base_url + stage, json=body, timeout=30
                 )
                 rendered.raise_for_status()
                 prompt = rendered.json()["prompt"]
+                if not isinstance(prompt, str):
+                    raise ValueError(
+                        "Backend response does not contain a rendered prompt string."
+                    )
+                stage = "/tokenize"
                 tokens = self._session.post(
                     self.base_url + "/tokenize",
                     json={"content": prompt, "add_special": True},
                     timeout=30,
                 )
                 tokens.raise_for_status()
+                token_ids = tokens.json()["tokens"]
+                if not isinstance(token_ids, list):
+                    raise ValueError(
+                        "Backend response does not contain an actual token list."
+                    )
                 # Image embeddings are not text tokens. Budget above the server's
                 # explicit 1,024-token image ceiling, including framing overhead.
                 images = sum(
@@ -665,8 +764,27 @@ class ModelManager:
                     for part in message["content"]
                     if part.get("type") == "image_url"
                 )
-                return len(tokens.json()["tokens"]) + images * 2048
-            except (requests.RequestException, KeyError, ValueError) as exc:
+                return len(token_ids) + images * 2048
+            except requests.HTTPError as exc:
+                response = exc.response
+                detail = (
+                    _response_error_detail(response)
+                    if response is not None
+                    else _backend_error_detail(str(exc))
+                )
+                status = f" HTTP {response.status_code}" if response is not None else ""
+                guidance = (
+                    " An incomplete tool call in saved history must be repaired before retrying."
+                    if stage == "/apply-template" and "Malformed JSON" in detail
+                    else ""
+                )
                 raise ModelError(
-                    f"Could not measure the actual model context: {exc}"
-                ) from exc
+                    f"Could not measure the actual model context: {stage}{status}: {detail}"
+                    + guidance
+                    + " Saved task history is retained; no approximate token count was used."
+                ) from None
+            except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
+                raise ModelError(
+                    f"Could not measure the actual model context at {stage}: {_backend_error_detail(str(exc))} "
+                    "Saved task history is retained; no approximate token count was used."
+                ) from None

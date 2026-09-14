@@ -91,3 +91,7 @@ QT_QPA_PLATFORM=offscreen python -m pytest -q
 The tests use synthetic files and mocked transports where appropriate. Real backend/supervisor checks are in `scripts/`; private diagnostic results are under `.local/verification`. [Verification report](docs/VERIFICATION.md) records measured outcomes and remaining limits. Run `python scripts/benchmark.py` to export the measured CSV and PNG/PDF/SVG comparison figures. A screenshot fixture labelled “Visual demo” is a visual test, not proof that its example tool operations ran.
 
 The source repository is private at [Andrianarivelo/loCAII](https://github.com/Andrianarivelo/loCAII). Runtime binaries and dependency wheels are installed separately under their upstream licenses: [llama.cpp](https://github.com/ggml-org/llama.cpp), [Qt for Python](https://doc.qt.io/qtforpython-6/), and [ComfyUI](https://github.com/Comfy-Org/ComfyUI).
+
+## Recovering incomplete tool requests
+
+If a generated tool request is cut off, loCAII rejects it without execution and asks for smaller operations. Its exact text stays in task history, while model-facing context uses a valid, clearly marked historical placeholder. This also allows **Continue** to reopen older tasks that previously failed with `/apply-template` HTTP 500. Actual token counting and context compaction still run; malformed context is not bypassed with an estimated count. Activity diagnostics wrap within the pane and preserve the full readable error.
