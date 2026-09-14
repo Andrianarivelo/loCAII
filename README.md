@@ -37,7 +37,7 @@ Text, PDF, DOCX and XLSX attachments have bounded extraction. Images use the mod
 - Context compaction creates a complete private archive before adopting a measured smaller prompt. Real user instructions remain in the active context; archived messages are retrievable in bounded pages.
 - Canonical full-content hashes validate resume coverage, including changes buried in large tool results.
 - Interrupted native tool calls have explicit unknown outcomes. Commands with missing receipts are not blindly replayed; durable jobs can be discovered and polled.
-- Empty answers and repeated tool failures have bounded recovery. Running jobs and failed commands cannot be reported as successful tool receipts.
+- Automatic recovery is persistent by default: repeated reads, tool failures and empty answers trigger a revised approach and cancellable backoff instead of ending the task. Running jobs and failed commands cannot be reported as successful receipts.
 - Terminal jobs survive a closed window, have output logs and real exit status, and support scoped cancellation. Interrupted startup is reported as an unknown outcome, and older active jobs remain discoverable.
 - Media jobs are reconciled in the background after a crash. Completed output is verified; uncertain jobs are not automatically resubmitted.
 - Successful read snapshots are reused only while file identity/timestamps/size match. Writes invalidate caches; metadata tools pause until new external evidence arrives.
@@ -130,8 +130,8 @@ of actual rows, selecting named columns from the user's request when available.
 On repeated reads, recovery rebuilds the prompt from user instructions and
 observed receipts instead of recycling the model's unverified recap. Changing
 column selectors on a header-only file does not count as progress. If repeated
-reads still seek absent rows, the app rechecks the file and pauses with specific
-verified facts. An empty template is not automatically a damaged file. All
+reads still seek absent rows, the app rechecks the file and uses those facts to
+seek another authorized input or unfinished part of the task. An empty template is not automatically a damaged file. All
 original history remains archived without rewriting.
 
 On Ubuntu, install the system `bubblewrap` package for terminal tools if it is
@@ -149,7 +149,45 @@ These are mechanism checks, not a model-intelligence score.
 
 `python scripts/check_evidence_reasoning.py` exercises the real local 9B model
 against an empty CSV and a valid wide CSV with stale prior assistant claims.
+It explicitly selects the optional bounded mode to test its input-diagnosis
+contract; normal app tasks use persistent recovery instead.
 The first case succeeds only with a correct empty-input diagnosis; it is not
 counted as completed analysis. The second must answer the comparison. Test files
 and model state are isolated, input hashes are checked, and the private GPU worker
 is released afterward. Earlier failed trials remain in private reports.
+
+
+## Autonomous long-running tasks
+
+Normal tasks now keep recovering without a fixed retry count. Repeated unchanged
+reads rebuild the working prompt from original user instructions and actual
+receipts, then ask for a different approach. Tool errors and empty answers use
+the same recovery path; local runtime failures retry automatically. Delays grow
+from 1 to at most 60 seconds to avoid a tight loop. Stop interrupts the wait,
+and new user instructions wake it early. Optional supervisor outages no longer
+end otherwise viable local work.
+
+Before accepting a final answer, a separate local model call checks it against
+the entire user objective, later corrections and observed results. Partial,
+unverified or malformed completion reports continue the task automatically.
+The reviewer cannot execute tools. This same-model check is useful scrutiny,
+not a guarantee of correctness. Missing external inputs may leave a task waiting
+and retrying; persistence cannot manufacture data or grant missing permissions.
+Completed write receipts and original history survive recovery, so automatic
+continuation does not itself replay completed effects. History archives also no
+longer end a task at the previous fixed64MiB transcript limit.
+
+Unlimited remains the default iteration setting. Stop and explicit positive
+iteration caps still work. API callers can use `persistent_mode=False` for the
+previous bounded-recovery behavior; the desktop uses persistent recovery by default.
+Existing app windows need reopening to load the change. This does not promise
+unattended recovery across a closed application, power loss or OS shutdown.
+
+Run `python scripts/benchmark_persistence.py` for disposable regressions comparing
+repeated reads, repeated failures and empty answers against the previous commit.
+It uses a scripted model and no-delay test waits to test control flow, not model
+intelligence or elapsed-time performance. Results are in
+`docs/benchmarks/persistence.{csv,png,pdf,svg}`. Run
+`python scripts/check_persistence_live.py` for an isolated real 9B task that reads
+two files, creates a result and reads it back before completion; its test deadline
+does not impose a deadline on normal tasks.

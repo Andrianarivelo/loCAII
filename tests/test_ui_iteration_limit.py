@@ -63,3 +63,26 @@ def test_missing_input_is_shown_as_attention_not_success(tmp_path, monkeypatch):
         assert window.stream_message.content == explanation
     finally:
         window.close()
+
+
+def test_automatic_recovery_starts_a_new_response_bubble(tmp_path, monkeypatch):
+    """The prior partial answer remains visible while the next attempt is separate."""
+    monkeypatch.setenv("LOCAII_HOME", str(tmp_path))
+    _, window, _ = create_window(tmp_path)
+    try:
+        window.handle_event("delta", {"text": "I have only checked the first file."})
+        previous = window.stream_message
+        window.handle_event(
+            "recovery",
+            {
+                "reason": "plan_revision",
+                "text": "The second file remains. Continuing automatically.",
+            },
+        )
+        window.handle_event("delta", {"text": "Both files are now verified."})
+        assert window.stream_message is not previous
+        assert previous.content == "I have only checked the first file."
+        assert window.stream_message.content == "Both files are now verified."
+        assert not window.error_seen
+    finally:
+        window.close()

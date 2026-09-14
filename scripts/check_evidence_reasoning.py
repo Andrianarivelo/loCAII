@@ -78,6 +78,7 @@ def main():
                     "Continue by checking the available evidence.",
                     options={
                         "model_id": MODEL_ID,
+                        "persistent_mode": False,  # Isolate the optional bounded input-diagnosis contract.
                         "workspace_writes": False,
                         "allow_terminal": False,
                         "read_all_files": False,

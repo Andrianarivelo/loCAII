@@ -87,6 +87,7 @@ def task(tmp_path):
 def run(engine, identifier, text, **extra):
     options = {
         "model_id": "fixture",
+        "persistent_mode": False,  # These contracts also cover the explicit bounded mode.
         "max_iterations": 10,
         "workspace_writes": True,
         "allow_terminal": False,

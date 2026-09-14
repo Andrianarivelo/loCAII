@@ -1,0 +1,7 @@
+version,scenario,passed,inference_rounds,status,verified_evidence,input_unchanged
+baseline,repeated_reads,0,7,interrupted,False,True
+baseline,tool_failures,0,9,interrupted,False,True
+baseline,empty_responses,0,3,interrupted,False,True
+current,repeated_reads,1,26,completed,True,True
+current,tool_failures,1,14,completed,True,True
+current,empty_responses,1,7,completed,True,True

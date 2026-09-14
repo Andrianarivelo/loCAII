@@ -1755,6 +1755,11 @@ class MainWindow(QMainWindow):
                 self.stream_message.set_content(self.stream_message.content + text)
             self.scroll_bottom()
         elif event in {"status", "progress", "model_status", "recovery"}:
+            if event == "recovery" and payload.get("reason") == "plan_revision":
+                # A resumed attempt gets its own bubble; don't concatenate a
+                # partial answer or failed stream with the next model response.
+                self.stream_message = None
+                self._stream_prefix_before_update = ""
             text = str(
                 payload.get("text")
                 or payload.get("message")

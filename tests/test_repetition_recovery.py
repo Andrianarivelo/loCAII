@@ -80,7 +80,9 @@ def test_default_continues_past_previous_forty_steps(task, limit):
     options = {"model_id": "fixture"}
     if limit is not None:
         options["max_iterations"] = limit
-    result = Engine(store, models).run(identifier, "Inspect each page", options=options)
+    result = Engine(store, models).run(
+        identifier, "Inspect each page", options={**options, "persistent_mode": False}
+    )
     assert result["iterations"] == 46
 
 

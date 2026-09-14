@@ -338,11 +338,8 @@ class Store:
             "memory": self.memory(identifier),
             "created": time.time(),
         }
-        encoded = canonical(value)
-        if len(encoded.encode()) > 64 * 1024 * 1024:
-            raise ValueError(
-                "Context archive exceeds 64 MiB; complete history remains in the database."
-            )
+        # Long tasks may accumulate more than 64 MiB of receipts. Archive the
+        # full history instead of ending a turn at an arbitrary transcript size.
         path = self.task_dir(identifier) / ("context-" + uuid.uuid4().hex + ".json")
         atomic_json(path, value)
         return path
